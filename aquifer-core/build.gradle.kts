@@ -1,7 +1,11 @@
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.KotlinJvm
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.dokka)
+    alias(libs.plugins.maven.publish)
 }
 
 group = "io.github.quasar-apps"
@@ -32,4 +36,35 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    coordinates("io.github.quasar-apps", "aquifer-core", version.toString())
+    configure(KotlinJvm(javadocJar = JavadocJar.Dokka("dokkaGeneratePublicationHtml"), sourcesJar = true))
+
+    pom {
+        name.set("Aquifer Core")
+        description.set("An offline-first, stale-while-revalidate data layer for Kotlin and Android.")
+        url.set("https://github.com/Quasar-Apps/api-library-example")
+        licenses {
+            license {
+                name.set("The Apache License, Version 2.0")
+                url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+            }
+        }
+        developers {
+            developer {
+                id.set("quasar-apps")
+                name.set("Quasar Apps")
+                url.set("https://github.com/Quasar-Apps")
+            }
+        }
+        scm {
+            url.set("https://github.com/Quasar-Apps/api-library-example")
+            connection.set("scm:git:git://github.com/Quasar-Apps/api-library-example.git")
+            developerConnection.set("scm:git:ssh://git@github.com/Quasar-Apps/api-library-example.git")
+        }
+    }
 }
