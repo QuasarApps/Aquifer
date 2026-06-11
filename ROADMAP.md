@@ -7,7 +7,8 @@ tested and every trade-off written down.
 
 **How to read this:** milestones are sorted by importance; items within a milestone are
 sorted by leverage (impact ÷ effort). Effort: **S** ≈ a day, **M** ≈ a few days, **L** ≈ a
-week+. Checked boxes are shipped. Numbers like #12 are tracked issues.
+week+, **XL** ≈ multiple weeks. Checked boxes are shipped. Numbers like #12 are tracked
+issues.
 
 ---
 
@@ -18,9 +19,10 @@ Everything else compounds once there's a public artifact.
 - [ ] **Publish v0.1.0 to Maven Central** — add the four secrets from
   [CONTRIBUTING](CONTRIBUTING.md), bump versions off `-SNAPSHOT`, date the CHANGELOG, push
   `v0.1.0`; the guarded release workflow does the rest. *(owner action — S)*
-- [ ] **Repo hygiene** — flip the default branch to `main`, delete the merged development
-  branch, merge the Dependabot PRs (#7–#11) once green; the Gradle group bump (Kotlin/AGP)
-  deserves the closest look. *(owner action — S)*
+- [ ] **Repo hygiene** — flip the default branch to `main`, then (once this roadmap PR has
+  landed) delete the merged development branch. The Dependabot PRs (#7–#11) are already
+  retargeted to base `main`, so they merge independently once green; the Gradle group bump
+  (Kotlin/AGP) deserves the closest look. *(owner action — S)*
 - [ ] **Maven Central badge + install snippet verification** after the first release. *(S)*
 
 ## 0.2 — Compose & everyday ergonomics
@@ -106,9 +108,12 @@ The engine's guarantees deserve machine-checked evidence.
 
 ## Beyond 1.0 — strategic bets
 
-- [ ] **Kotlin Multiplatform core** — `aquifer-core` is dispatcher-clean already; port the
-  file store to `kotlinx-io`/okio, add iOS/desktop targets and an iOS sample. The largest
-  differentiator on the list. *(XL)*
+- [ ] **Kotlin Multiplatform core** — dispatcher-clean coroutines are the easy half; the
+  engine's JVM concurrency also has to move: the `ConcurrentHashMap` CAS loops (`inFlight`,
+  `activeKeys`, `keyEpochs`), `AtomicLong`/`AtomicBoolean`, and the `LinkedHashMap`-based
+  LRU need KMP equivalents (atomicfu, mutex-guarded maps), plus a `kotlinx-io`/okio port of
+  the file store, iOS/desktop targets, and an iOS sample. The largest differentiator on the
+  list. *(XL)*
 - [ ] **Offline mutations** (`aquifer-mutations`) — the write-side counterpart to Aquifer's
   read-side: an optimistic-update queue with rollback and conflict hooks, surviving process
   death via the same `SourceOfTruth` machinery. *(XL)*
