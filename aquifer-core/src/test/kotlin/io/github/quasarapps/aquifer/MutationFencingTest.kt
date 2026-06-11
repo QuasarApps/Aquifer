@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 /**
@@ -107,6 +108,71 @@ class MutationFencingTest {
             expectNoEvents()
         }
         assertEquals(2, calls)
+    }
+
+    /** Capture-then-suspend read: resolves its result, then waits at the gate before returning. */
+    private class GatedDisk : SourceOfTruth<String, String> {
+        val storage = mutableMapOf("k" to PersistedEntry("old-user-data", 0L))
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+        override suspend fun read(key: String): PersistedEntry<String>? {
+            val result = storage[key]
+            gate.await()
+            return result
+        }
+
+        override suspend fun write(key: String, entry: PersistedEntry<String>) {
+            storage[key] = entry
+        }
+
+        override suspend fun delete(key: String) {
+            storage.remove(key)
+        }
+
+        override suspend fun deleteAll() = storage.clear()
+    }
+
+    @Test
+    fun `a persistence read suspended across invalidateAll cannot resurrect the data`() = runTest {
+        val disk = GatedDisk()
+        val store = aquifer<String, String> {
+            scope(backgroundScope)
+            fetcher { "fetched" }
+            persistence(disk)
+        }
+
+        // Hydration begins and suspends inside the storage read…
+        val reader = async { runCatching { store.get("k", Freshness.CacheOnly) } }
+        settle()
+
+        store.invalidateAll() // …logout happens…
+        disk.gate.complete(Unit) // …and the read resumes with the pre-logout entry.
+        settle()
+
+        // The resumed hydration must not commit the deleted entry back into memory.
+        assertFailsWith<CacheMissException> { store.get("k", Freshness.CacheOnly) }
+        // The suspended reader itself sees a miss too.
+        assertIs<CacheMissException>(reader.await().exceptionOrNull())
+    }
+
+    @Test
+    fun `a persistence read suspended across invalidate cannot resurrect the data`() = runTest {
+        val disk = GatedDisk()
+        val store = aquifer<String, String> {
+            scope(backgroundScope)
+            fetcher { "fetched" }
+            persistence(disk)
+        }
+
+        val reader = async { runCatching { store.get("k", Freshness.CacheOnly) } }
+        settle()
+
+        store.invalidate("k")
+        disk.gate.complete(Unit)
+        settle()
+
+        assertFailsWith<CacheMissException> { store.get("k", Freshness.CacheOnly) }
+        assertIs<CacheMissException>(reader.await().exceptionOrNull())
     }
 
     @Test
