@@ -15,11 +15,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.onSubscription
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -45,11 +48,17 @@ internal class RealAquifer<K : Any, V : Any>(
     private val closed = AtomicBoolean(false)
 
     /**
-     * Single broadcast bus for all keys; streams filter for their key. Emissions suspend when
-     * the buffer is full, so a pathologically slow collector applies backpressure rather than
-     * losing events.
+     * Single broadcast bus for all keys; streams filter for their key.
+     *
+     * Each stream collector drains the bus into an unbounded per-collector buffer running on
+     * the store's dispatcher (see [stream]), so engine emissions never block on a slow or
+     * stalled downstream collector: one laggy screen can't stall fetch completion, writes, or
+     * other keys' streams. The cost is that a stalled collector buffers its own backlog.
      */
     private val events = MutableSharedFlow<Event<K, V>>(extraBufferCapacity = EVENT_BUFFER_CAPACITY)
+
+    /** Context for bus draining: the store's context minus its job, as required by [flowOn]. */
+    private val busDrainContext = scope.coroutineContext.minusKey(Job)
 
     override fun stream(key: K, freshness: Freshness): Flow<DataState<V>> {
         checkOpen()
@@ -59,6 +68,8 @@ internal class RealAquifer<K : Any, V : Any>(
             var last: V? = null
             events
                 .onSubscription { prime(key, freshness) }
+                .buffer(Channel.UNLIMITED)
+                .flowOn(busDrainContext)
                 .collect { event ->
                     when (event) {
                         is Event.Updated -> if (event.key == key) {
@@ -150,15 +161,20 @@ internal class RealAquifer<K : Any, V : Any>(
         if (entry != null && freshness != Freshness.NetworkOnly) {
             emit(Event.Updated(key, entry.value, Origin.MEMORY, entry.writtenAtMillis))
         }
+        // A fetch that started before this collector subscribed broadcast its Fetching event
+        // too early for us to see it. Note it now (before refresh, so a fetch we start
+        // ourselves is not mistaken for a pre-existing one) and replay it below.
+        val joinedInFlightFetch = inFlight.containsKey(key)
         val needsValue = entry == null || isExpired(entry.writtenAtMillis)
         val shouldFetch = when (freshness) {
             Freshness.CacheOnly -> false
             Freshness.CacheFirst, Freshness.StaleWhileRevalidate -> needsValue
             Freshness.NetworkFirst, Freshness.NetworkOnly -> true
         }
+        if (shouldFetch) refresh(key)
         when {
-            shouldFetch -> refresh(key)
-            entry == null -> emit(Event.Failed(key, CacheMissException(key)))
+            joinedInFlightFetch -> emit(Event.Fetching(key))
+            !shouldFetch && entry == null -> emit(Event.Failed(key, CacheMissException(key)))
         }
     }
 

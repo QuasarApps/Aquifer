@@ -100,6 +100,36 @@ class DeduplicationTest {
     }
 
     @Test
+    fun `a stream that subscribes during an in-flight fetch immediately observes loading`() = runTest {
+        val calls = AtomicInteger()
+        val store = aquifer<String, String> {
+            scope(backgroundScope)
+            fetcher {
+                calls.incrementAndGet()
+                delay(100)
+                "value"
+            }
+        }
+
+        turbineScope {
+            val first = store.stream("k").testIn(backgroundScope)
+            assertEquals(DataState.Loading(null), first.awaitItem())
+
+            // The fetch is in flight; a late subscriber must still see the Loading state
+            // even though the Fetching event was broadcast before it subscribed.
+            val second = store.stream("k").testIn(backgroundScope)
+            assertEquals(DataState.Loading(null), second.awaitItem())
+
+            assertEquals(DataState.Content("value", Origin.FETCHER, isStale = false), first.awaitItem())
+            assertEquals(DataState.Content("value", Origin.FETCHER, isStale = false), second.awaitItem())
+            assertEquals(1, calls.get())
+
+            first.cancelAndIgnoreRemainingEvents()
+            second.cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `a new fetch starts after the previous one completes`() = runTest {
         val calls = AtomicInteger()
         val store = aquifer<String, Int> {

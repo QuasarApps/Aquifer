@@ -154,6 +154,9 @@ fun `stale profile is served then revalidated`() = runTest {
   screen. Cancelling the store's scope (or `close()`) cancels everything.
 - **Errors are data.** Streams never terminate on fetch failure; failures are emitted as
   `DataState.Failure` carrying the last known value, and broadcast to all observers of the key.
+- **Slow collectors are isolated.** Every stream drains the store's update bus through an
+  unbounded per-collector buffer on the store's dispatcher, so one stalled screen can never
+  block fetch completion, writes, or other streams.
 
 ## Roadmap
 
