@@ -33,8 +33,16 @@ if (state is DataState.Loading) RefreshIndicator()
 if (state is DataState.Failure) RefreshFailedSnackbar()
 ```
 
-> ⚠️ **Status: pre-1.0.** The API is still settling; artifacts are not yet published to Maven
-> Central. The roadmap below tracks what's done and what's next.
+> ⚠️ **Status: pre-1.0.** The API surface is locked by binary-compatibility validation and the
+> Maven Central publishing pipeline is configured, but no release has been tagged yet. Once
+> `v0.1.0` ships:
+>
+> ```kotlin
+> dependencies {
+>     implementation("io.github.quasar-apps:aquifer-core:0.1.0")
+>     implementation("io.github.quasar-apps:aquifer-persistence-file:0.1.0") // optional
+> }
+> ```
 
 ## Why Aquifer?
 
@@ -226,14 +234,24 @@ fun `stale profile is served then revalidated`() = runTest {
   unbounded per-collector buffer on the store's dispatcher, so one stalled screen can never
   block fetch completion, writes, or other streams.
 
+## Try it
+
+```bash
+./gradlew :sample:run    # runnable tour: SWR, dedup, local edits, process death, reconnect
+./gradlew dokkaGenerate  # aggregated API docs in build/dokka/
+./gradlew build          # tests + binary-compatibility check (api/*.api dumps)
+```
+
 ## Roadmap
 
 - [x] Core: freshness policies, LRU memory cache, deduplication, reactive streams
 - [x] `SourceOfTruth` persistence layer + disk-backed module (survive process death)
 - [x] Retry policies with exponential backoff and jitter
 - [x] Revalidate-on-reconnect (`revalidateOn`) + observability hooks (`AquiferEvents`)
-- [ ] Dokka API docs, binary-compatibility validation, Maven Central publishing
-- [ ] Sample app + Android integration recipes
+- [x] Dokka API docs, binary-compatibility validation, Maven Central publishing pipeline
+- [x] Runnable sample + Android integration recipes
+- [ ] Tag and publish `v0.1.0`
+- [ ] `aquifer-android` companion (ConnectivityManager trigger, Compose helpers)
 
 ## Project layout
 
@@ -241,6 +259,7 @@ fun `stale profile is served then revalidated`() = runTest {
 |---|---|
 | `aquifer-core` | The store: public API + engine. Pure Kotlin/JVM, depends only on `kotlinx-coroutines-core`. |
 | `aquifer-persistence-file` | JSON-files `SourceOfTruth` backed by kotlinx.serialization: atomic writes, self-healing reads. |
+| `sample` | Runnable CLI walkthrough of every feature (`./gradlew :sample:run`). |
 
 ## License
 

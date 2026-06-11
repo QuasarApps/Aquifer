@@ -16,3 +16,4 @@ rootProject.name = "aquifer"
 
 include(":aquifer-core")
 include(":aquifer-persistence-file")
+include(":sample")
