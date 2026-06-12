@@ -127,6 +127,15 @@ val current = users.get(id, Freshness.NetworkFirst) // prefer network, tolerate 
 val pinned = users.get(id, Freshness.CacheOnly)     // cache or CacheMissException, never fetches
 ```
 
+One screen can demand fresher data than the store-wide policy — or accept older — without
+changing anything global. `maxAge` overrides the TTL for a single call or stream:
+
+```kotlin
+val live = users.get(id, maxAge = 30.seconds)         // refetch unless really fresh
+val rough = users.get(id, maxAge = 1.hours)           // old data is fine here, skip the network
+users.stream(id, maxAge = 1.minutes)                  // this stream's staleness bar, no one else's
+```
+
 ### Surviving process death
 
 Add a `SourceOfTruth` and cached data outlives the process: cold starts render from disk

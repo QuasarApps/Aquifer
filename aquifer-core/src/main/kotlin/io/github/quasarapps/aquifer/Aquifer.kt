@@ -1,6 +1,7 @@
 package io.github.quasarapps.aquifer
 
 import kotlinx.coroutines.flow.Flow
+import kotlin.time.Duration
 
 /**
  * An offline-first, keyed data store that mediates between a remote fetcher and local caches.
@@ -45,18 +46,36 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      *
      * @param freshness strategy for the initial emission; defaults to
      *   [Freshness.StaleWhileRevalidate].
+     * @param maxAge per-call override of the store's time-to-live for this stream's
+     *   fresh/stale decisions: entries older than [maxAge] count as stale for the initial
+     *   fetch decision and for the `isStale` flag of every [DataState.Content] this stream
+     *   emits. `null` (the default) uses the store-wide [FreshnessConfig.timeToLive].
+     *   Strategies that never consult staleness ([Freshness.CacheOnly],
+     *   [Freshness.NetworkFirst], [Freshness.NetworkOnly]) are unaffected.
      */
-    public fun stream(key: K, freshness: Freshness = Freshness.StaleWhileRevalidate): Flow<DataState<V>>
+    public fun stream(
+        key: K,
+        freshness: Freshness = Freshness.StaleWhileRevalidate,
+        maxAge: Duration? = null,
+    ): Flow<DataState<V>>
 
     /**
      * Returns the value for [key] as a one-shot call, honouring [freshness]
      * (default [Freshness.CacheFirst]).
      *
+     * @param maxAge per-call override of the store's time-to-live for this read's
+     *   fresh/stale decision — a screen that needs minute-fresh data can demand it without
+     *   changing the store-wide policy, and one happy with old data can avoid a fetch. As
+     *   with [stream], strategies that never consult staleness are unaffected.
      * @throws CacheMissException with [Freshness.CacheOnly] when nothing is cached.
      * @throws Throwable the fetcher's exception, when the strategy required a fetch and no
      *   cached fallback was permitted.
      */
-    public suspend fun get(key: K, freshness: Freshness = Freshness.CacheFirst): V
+    public suspend fun get(
+        key: K,
+        freshness: Freshness = Freshness.CacheFirst,
+        maxAge: Duration? = null,
+    ): V
 
     /**
      * Fetches a guaranteed-fresh value for [key], bypassing cached reads.

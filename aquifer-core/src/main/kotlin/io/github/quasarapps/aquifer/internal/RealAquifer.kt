@@ -110,8 +110,9 @@ internal class RealAquifer<K : Any, V : Any>(
     /** Context for bus draining: the store's context minus its job, as required by [flowOn]. */
     private val busDrainContext = scope.coroutineContext.minusKey(Job)
 
-    override fun stream(key: K, freshness: Freshness): Flow<DataState<V>> {
+    override fun stream(key: K, freshness: Freshness, maxAge: Duration?): Flow<DataState<V>> {
         checkOpen()
+        requireValidMaxAge(maxAge)
         return flow {
             checkOpen()
             // CacheOnly collectors never fetch on their own behalf, so they don't make a key
@@ -119,14 +120,14 @@ internal class RealAquifer<K : Any, V : Any>(
             val countsAsActive = freshness != Freshness.CacheOnly
             if (countsAsActive) registerActive(key)
             try {
-                collectStates(key, freshness)
+                collectStates(key, freshness, maxAge)
             } finally {
                 if (countsAsActive) unregisterActive(key)
             }
         }.distinctUntilChanged()
     }
 
-    private suspend fun FlowCollector<DataState<V>>.collectStates(key: K, freshness: Freshness) {
+    private suspend fun FlowCollector<DataState<V>>.collectStates(key: K, freshness: Freshness, maxAge: Duration?) {
         // Captured before hydration so prime() can tell pure LRU eviction (epoch untouched)
         // apart from invalidation when memory comes up empty.
         val preloadEpoch = epochOf(key)
@@ -142,7 +143,7 @@ internal class RealAquifer<K : Any, V : Any>(
         // the sequence is immune to clock ties and backwards wall-clock steps.
         var newestSequence = Long.MIN_VALUE
         events
-            .onSubscription { prime(key, freshness, preloaded, preloadEpoch) }
+            .onSubscription { prime(key, freshness, maxAge, preloaded, preloadEpoch) }
             .buffer(Channel.UNLIMITED)
             .flowOn(busDrainContext)
             .collect { event ->
@@ -150,7 +151,7 @@ internal class RealAquifer<K : Any, V : Any>(
                     is Event.Updated -> if (event.key == key && event.sequence >= newestSequence) {
                         newestSequence = event.sequence
                         last = event.value
-                        emit(DataState.Content(event.value, event.origin, isExpired(event.writtenAtMillis)))
+                        emit(DataState.Content(event.value, event.origin, isExpired(event.writtenAtMillis, maxAge)))
                     }
 
                     is Event.Fetching -> if (event.key == key) {
@@ -176,11 +177,12 @@ internal class RealAquifer<K : Any, V : Any>(
             }
     }
 
-    override suspend fun get(key: K, freshness: Freshness): V {
+    override suspend fun get(key: K, freshness: Freshness, maxAge: Duration?): V {
         checkOpen()
+        requireValidMaxAge(maxAge)
         // NetworkOnly bypasses cached reads entirely: no memory lookup, no persistence I/O.
         val entry = if (freshness == Freshness.NetworkOnly) null else load(key)?.entry
-        val usable = entry != null && !isExpired(entry.writtenAtMillis)
+        val usable = entry != null && !isExpired(entry.writtenAtMillis, maxAge)
         return when (freshness) {
             Freshness.CacheOnly -> entry?.value ?: throw CacheMissException(key)
 
@@ -327,6 +329,7 @@ internal class RealAquifer<K : Any, V : Any>(
     private suspend fun FlowCollector<Event<K, V>>.prime(
         key: K,
         freshness: Freshness,
+        maxAge: Duration?,
         preloaded: Snapshot<V>?,
         preloadEpoch: Pair<Long, Long>,
     ) {
@@ -351,7 +354,7 @@ internal class RealAquifer<K : Any, V : Any>(
         // too early for us to see it. Note it now (before refresh, so a fetch we start
         // ourselves is not mistaken for a pre-existing one) and replay it below.
         val joinedInFlightFetch = inFlight.containsKey(key)
-        val needsValue = entry == null || isExpired(entry.writtenAtMillis)
+        val needsValue = entry == null || isExpired(entry.writtenAtMillis, maxAge)
         val shouldFetch = when (freshness) {
             Freshness.CacheOnly -> false
             Freshness.CacheFirst, Freshness.StaleWhileRevalidate -> needsValue
@@ -524,9 +527,17 @@ internal class RealAquifer<K : Any, V : Any>(
         }
     }
 
-    private fun isExpired(writtenAtMillis: Long): Boolean {
-        if (timeToLive == Duration.INFINITE) return false
-        return clock.nowMillis() - writtenAtMillis >= timeToLive.inWholeMilliseconds
+    /** Staleness against [maxAge] when given (per-call override), else the store-wide TTL. */
+    private fun isExpired(writtenAtMillis: Long, maxAge: Duration? = null): Boolean {
+        val horizon = maxAge ?: timeToLive
+        if (horizon == Duration.INFINITE) return false
+        return clock.nowMillis() - writtenAtMillis >= horizon.inWholeMilliseconds
+    }
+
+    private fun requireValidMaxAge(maxAge: Duration?) {
+        require(maxAge == null || (maxAge.isPositive() && maxAge.isFinite())) {
+            "maxAge must be positive and finite, was $maxAge"
+        }
     }
 
     private fun checkOpen() = check(!closed.get()) { "Aquifer is closed" }

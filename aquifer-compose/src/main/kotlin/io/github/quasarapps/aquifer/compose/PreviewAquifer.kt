@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlin.time.Duration
 
 /**
  * An [Aquifer] for `@Preview` composables and UI tests: serves only the seeded entries and
@@ -37,7 +38,7 @@ private class PreviewAquifer<K : Any, V : Any>(seed: Map<K, V>) : Aquifer<K, V> 
 
     private val snapshots = MutableStateFlow(seed)
 
-    override fun stream(key: K, freshness: Freshness): Flow<DataState<V>> =
+    override fun stream(key: K, freshness: Freshness, maxAge: Duration?): Flow<DataState<V>> =
         snapshots
             .map { it[key] }
             .distinctUntilChanged()
@@ -49,7 +50,7 @@ private class PreviewAquifer<K : Any, V : Any>(seed: Map<K, V>) : Aquifer<K, V> 
                 }
             }
 
-    override suspend fun get(key: K, freshness: Freshness): V =
+    override suspend fun get(key: K, freshness: Freshness, maxAge: Duration?): V =
         snapshots.value[key] ?: throw CacheMissException(key)
 
     override suspend fun fresh(key: K): V = get(key)
