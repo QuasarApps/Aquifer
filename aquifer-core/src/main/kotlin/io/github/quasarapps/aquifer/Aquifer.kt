@@ -1,6 +1,7 @@
 package io.github.quasarapps.aquifer
 
 import kotlinx.coroutines.flow.Flow
+import kotlin.time.Duration
 
 /**
  * An offline-first, keyed data store that mediates between a remote fetcher and local caches.
@@ -45,18 +46,42 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      *
      * @param freshness strategy for the initial emission; defaults to
      *   [Freshness.StaleWhileRevalidate].
+     * @param maxAge per-call override of the store's time-to-live, replacing it everywhere
+     *   this stream consults staleness: the initial fetch decision (for the staleness-aware
+     *   strategies, [Freshness.CacheFirst] and [Freshness.StaleWhileRevalidate]) and the
+     *   `isStale` flag of every [DataState.Content] this stream emits — the coloring applies
+     *   to **every** strategy, so even a [Freshness.CacheOnly] stream renders staleness
+     *   hints against its own bar while its fetch behavior stays untouched. `null` (the
+     *   default) uses the store-wide [FreshnessConfig.timeToLive]; [Duration.INFINITE] makes
+     *   this stream treat any cached entry as fresh. Must be positive.
      */
-    public fun stream(key: K, freshness: Freshness = Freshness.StaleWhileRevalidate): Flow<DataState<V>>
+    public fun stream(
+        key: K,
+        freshness: Freshness = Freshness.StaleWhileRevalidate,
+        maxAge: Duration? = null,
+    ): Flow<DataState<V>>
 
     /**
      * Returns the value for [key] as a one-shot call, honouring [freshness]
      * (default [Freshness.CacheFirst]).
      *
+     * @param maxAge per-call override of the store's time-to-live for this read's
+     *   fresh/stale decision — a screen that needs minute-fresh data can demand it without
+     *   changing the store-wide policy, and one happy with old data can avoid a fetch.
+     *   Only the staleness-aware strategies ([Freshness.CacheFirst],
+     *   [Freshness.StaleWhileRevalidate]) consult it for a one-shot read; the others ignore
+     *   it beyond validation (unlike [stream], `get` emits no `isStale` flags to color).
+     *   [Duration.INFINITE] turns a [Freshness.CacheFirst] read into "serve anything
+     *   cached, fetch only on miss". Must be positive.
      * @throws CacheMissException with [Freshness.CacheOnly] when nothing is cached.
      * @throws Throwable the fetcher's exception, when the strategy required a fetch and no
      *   cached fallback was permitted.
      */
-    public suspend fun get(key: K, freshness: Freshness = Freshness.CacheFirst): V
+    public suspend fun get(
+        key: K,
+        freshness: Freshness = Freshness.CacheFirst,
+        maxAge: Duration? = null,
+    ): V
 
     /**
      * Fetches a guaranteed-fresh value for [key], bypassing cached reads.

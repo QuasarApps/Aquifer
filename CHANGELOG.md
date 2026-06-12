@@ -21,6 +21,17 @@ versions may contain breaking changes.
 
 - `DataState` extensions: `isLoading`, `valueOrThrow()`, `map`, `onContent`, `onFailure`.
 
+### Added — per-call freshness
+
+- `maxAge` parameter on `Aquifer.get`, `Aquifer.stream`, and Compose's
+  `collectAsState`/`rememberStream`: a per-call override of the store's time-to-live.
+  Fetch decisions change only for the staleness-aware strategies (`CacheFirst`,
+  `StaleWhileRevalidate`) — `CacheOnly`, `NetworkFirst`, and `NetworkOnly` fetch exactly as
+  before — but a stream's `isStale` flags follow the caller's `maxAge` under every strategy.
+  `Duration.INFINITE` is allowed and means "serve anything cached, fetch only on miss".
+  Implementor note: the `Aquifer` interface methods gained a parameter (source-breaking for
+  custom implementations, pre-1.0).
+
 ### Tooling
 
 - Toolchain refresh (supersedes the Dependabot group bump): Gradle 9.5.1, Kotlin 2.4.0,

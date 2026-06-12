@@ -13,6 +13,7 @@ import io.github.quasarapps.aquifer.Freshness
 import kotlinx.coroutines.flow.Flow
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.time.Duration
 
 /**
  * Observes the data for [key] as Compose [State], collecting lifecycle-aware: collection
@@ -31,18 +32,21 @@ import kotlin.coroutines.EmptyCoroutineContext
  * }
  * ```
  *
- * The underlying stream is [remembered][rememberStream] per `(aquifer, key, freshness)`, so
- * recompositions don't restart it. Before the first emission the state is
+ * The underlying stream is [remembered][rememberStream] per `(aquifer, key, freshness,
+ * maxAge)`, so recompositions don't restart it — but changing any of those, including
+ * [maxAge], starts a fresh collection. Before the first emission the state is
  * `DataState.Loading(null)`.
  */
 @Composable
+@Suppress("LongParameterList") // Defaulted knobs mirroring collectAsStateWithLifecycle — idiomatic Compose shape.
 public fun <K : Any, V : Any> Aquifer<K, V>.collectAsState(
     key: K,
     freshness: Freshness = Freshness.StaleWhileRevalidate,
+    maxAge: Duration? = null,
     lifecycleOwner: LifecycleOwner = LocalLifecycleOwner.current,
     minActiveState: Lifecycle.State = Lifecycle.State.STARTED,
     context: CoroutineContext = EmptyCoroutineContext,
-): State<DataState<V>> = rememberStream(key, freshness).collectAsStateWithLifecycle(
+): State<DataState<V>> = rememberStream(key, freshness, maxAge).collectAsStateWithLifecycle(
     initialValue = DataState.Loading<V>(null),
     lifecycle = lifecycleOwner.lifecycle,
     minActiveState = minActiveState,
@@ -51,11 +55,12 @@ public fun <K : Any, V : Any> Aquifer<K, V>.collectAsState(
 
 /**
  * Returns [Aquifer.stream] for [key], remembered across recompositions keyed on
- * `(aquifer, key, freshness)` — the building block for [collectAsState], exposed for cases
- * that need the raw [Flow] (custom operators, `produceState`, snapshotting in effects).
+ * `(aquifer, key, freshness, maxAge)` — the building block for [collectAsState], exposed for
+ * cases that need the raw [Flow] (custom operators, `produceState`, snapshotting in effects).
  */
 @Composable
 public fun <K : Any, V : Any> Aquifer<K, V>.rememberStream(
     key: K,
     freshness: Freshness = Freshness.StaleWhileRevalidate,
-): Flow<DataState<V>> = remember(this, key, freshness) { stream(key, freshness) }
+    maxAge: Duration? = null,
+): Flow<DataState<V>> = remember(this, key, freshness, maxAge) { stream(key, freshness, maxAge) }
