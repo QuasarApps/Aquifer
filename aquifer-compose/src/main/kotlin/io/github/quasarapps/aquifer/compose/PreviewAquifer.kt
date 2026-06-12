@@ -38,8 +38,9 @@ private class PreviewAquifer<K : Any, V : Any>(seed: Map<K, V>) : Aquifer<K, V> 
 
     private val snapshots = MutableStateFlow(seed)
 
-    override fun stream(key: K, freshness: Freshness, maxAge: Duration?): Flow<DataState<V>> =
-        snapshots
+    override fun stream(key: K, freshness: Freshness, maxAge: Duration?): Flow<DataState<V>> {
+        requireValidMaxAge(maxAge)
+        return snapshots
             .map { it[key] }
             .distinctUntilChanged()
             .map { value ->
@@ -49,9 +50,19 @@ private class PreviewAquifer<K : Any, V : Any>(seed: Map<K, V>) : Aquifer<K, V> 
                     DataState.Failure(CacheMissException(key))
                 }
             }
+    }
 
-    override suspend fun get(key: K, freshness: Freshness, maxAge: Duration?): V =
-        snapshots.value[key] ?: throw CacheMissException(key)
+    override suspend fun get(key: K, freshness: Freshness, maxAge: Duration?): V {
+        requireValidMaxAge(maxAge)
+        return snapshots.value[key] ?: throw CacheMissException(key)
+    }
+
+    /** Previews have no clock or TTL, so `maxAge` has no effect — but the contract is enforced. */
+    private fun requireValidMaxAge(maxAge: Duration?) {
+        require(maxAge == null || maxAge.isPositive()) {
+            "maxAge must be positive, was $maxAge"
+        }
+    }
 
     override suspend fun fresh(key: K): V = get(key)
 

@@ -46,12 +46,14 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      *
      * @param freshness strategy for the initial emission; defaults to
      *   [Freshness.StaleWhileRevalidate].
-     * @param maxAge per-call override of the store's time-to-live for this stream's
-     *   fresh/stale decisions: entries older than [maxAge] count as stale for the initial
-     *   fetch decision and for the `isStale` flag of every [DataState.Content] this stream
-     *   emits. `null` (the default) uses the store-wide [FreshnessConfig.timeToLive].
-     *   Strategies that never consult staleness ([Freshness.CacheOnly],
-     *   [Freshness.NetworkFirst], [Freshness.NetworkOnly]) are unaffected.
+     * @param maxAge per-call override of the store's time-to-live, replacing it everywhere
+     *   this stream consults staleness: the initial fetch decision (for the staleness-aware
+     *   strategies, [Freshness.CacheFirst] and [Freshness.StaleWhileRevalidate]) and the
+     *   `isStale` flag of every [DataState.Content] this stream emits — the coloring applies
+     *   to **every** strategy, so even a [Freshness.CacheOnly] stream renders staleness
+     *   hints against its own bar while its fetch behavior stays untouched. `null` (the
+     *   default) uses the store-wide [FreshnessConfig.timeToLive]; [Duration.INFINITE] makes
+     *   this stream treat any cached entry as fresh. Must be positive.
      */
     public fun stream(
         key: K,
@@ -65,8 +67,12 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      *
      * @param maxAge per-call override of the store's time-to-live for this read's
      *   fresh/stale decision — a screen that needs minute-fresh data can demand it without
-     *   changing the store-wide policy, and one happy with old data can avoid a fetch. As
-     *   with [stream], strategies that never consult staleness are unaffected.
+     *   changing the store-wide policy, and one happy with old data can avoid a fetch.
+     *   Only the staleness-aware strategies ([Freshness.CacheFirst],
+     *   [Freshness.StaleWhileRevalidate]) consult it for a one-shot read; the others ignore
+     *   it beyond validation (unlike [stream], `get` emits no `isStale` flags to color).
+     *   [Duration.INFINITE] turns a [Freshness.CacheFirst] read into "serve anything
+     *   cached, fetch only on miss". Must be positive.
      * @throws CacheMissException with [Freshness.CacheOnly] when nothing is cached.
      * @throws Throwable the fetcher's exception, when the strategy required a fetch and no
      *   cached fallback was permitted.

@@ -530,13 +530,16 @@ internal class RealAquifer<K : Any, V : Any>(
     /** Staleness against [maxAge] when given (per-call override), else the store-wide TTL. */
     private fun isExpired(writtenAtMillis: Long, maxAge: Duration? = null): Boolean {
         val horizon = maxAge ?: timeToLive
-        if (horizon == Duration.INFINITE) return false
-        return clock.nowMillis() - writtenAtMillis >= horizon.inWholeMilliseconds
+        // Duration arithmetic, not inWholeMilliseconds: a sub-millisecond horizon must not
+        // truncate to zero and declare everything instantly stale. INFINITE compares false
+        // against any finite elapsed time, giving "always fresh" naturally.
+        return (clock.nowMillis() - writtenAtMillis).milliseconds >= horizon
     }
 
     private fun requireValidMaxAge(maxAge: Duration?) {
-        require(maxAge == null || (maxAge.isPositive() && maxAge.isFinite())) {
-            "maxAge must be positive and finite, was $maxAge"
+        // INFINITE is allowed and meaningful ("serve anything cached"), unlike retry delays.
+        require(maxAge == null || maxAge.isPositive()) {
+            "maxAge must be positive, was $maxAge"
         }
     }
 

@@ -133,6 +133,7 @@ changing anything global. `maxAge` overrides the TTL for a single call or stream
 ```kotlin
 val live = users.get(id, maxAge = 30.seconds)         // refetch unless really fresh
 val rough = users.get(id, maxAge = 1.hours)           // old data is fine here, skip the network
+val any = users.get(id, maxAge = Duration.INFINITE)   // serve anything cached, fetch only on miss
 users.stream(id, maxAge = 1.minutes)                  // this stream's staleness bar, no one else's
 ```
 
