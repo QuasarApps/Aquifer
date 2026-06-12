@@ -11,7 +11,8 @@ public val DataState<*>.isLoading: Boolean
  */
 public fun <V : Any> DataState<V>.valueOrThrow(): V = when (this) {
     is DataState.Failure -> throw error
-    else -> value ?: throw NoSuchElementException("No value available yet")
+    // "available", not "available yet": for Empty there is no fetch coming.
+    else -> value ?: throw NoSuchElementException("No value available")
 }
 
 /**

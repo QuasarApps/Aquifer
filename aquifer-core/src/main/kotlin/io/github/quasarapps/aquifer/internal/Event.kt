@@ -32,9 +32,15 @@ internal sealed interface Event<out K : Any, out V : Any> {
      */
     data class Absent<K : Any>(val key: K) : Event<K, Nothing>
 
-    /** The cached entry for [key] was dropped. */
-    data class Invalidated<K : Any>(val key: K) : Event<K, Nothing>
+    /**
+     * The cached entry for [key] was dropped.
+     *
+     * @property sequence commit order of the drop, from the store's sequencer. Drops share
+     *   [Updated]'s total order so a collector can reject one that lost the emit race to a
+     *   newer write — applying it blindly would resurrect or erase out of order.
+     */
+    data class Invalidated<K : Any>(val key: K, val sequence: Long) : Event<K, Nothing>
 
-    /** All cached entries were dropped. */
-    data object ClearedAll : Event<Nothing, Nothing>
+    /** All cached entries were dropped. [sequence] as in [Invalidated]. */
+    data class ClearedAll(val sequence: Long) : Event<Nothing, Nothing>
 }
