@@ -32,8 +32,9 @@ import kotlin.time.Duration
  * }
  * ```
  *
- * The underlying stream is [remembered][rememberStream] per `(aquifer, key, freshness)`, so
- * recompositions don't restart it. Before the first emission the state is
+ * The underlying stream is [remembered][rememberStream] per `(aquifer, key, freshness,
+ * maxAge)`, so recompositions don't restart it — but changing any of those, including
+ * [maxAge], starts a fresh collection. Before the first emission the state is
  * `DataState.Loading(null)`.
  */
 @Composable
