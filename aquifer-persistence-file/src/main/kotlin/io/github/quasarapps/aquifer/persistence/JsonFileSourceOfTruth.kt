@@ -73,7 +73,9 @@ import kotlin.io.path.readText
  * store found over budget the first time it is touched (say, after limits were lowered
  * between releases) is trimmed the same way. The caps are absolute — even a brand-new entry
  * is evicted when it alone exceeds [maxBytes], so such a value simply never persists (memory
- * cache and fetcher still serve it; the next process start refetches).
+ * cache and fetcher still serve it; the next process start refetches). Each eviction pass is
+ * best-effort: an entry whose file cannot be deleted right now ends the pass with the store
+ * still over budget, and the next write retries it.
  *
  * Recency is tracked exactly within a process — reads and writes both count as use — and
  * approximated across restarts by file modification time, which amounts to last-write order
@@ -137,8 +139,10 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
                 forgetIfMissing(file)
                 return@withContext null
             }
-            val stored = json.decodeFromString(storedSerializer, file.readText())
+            // Recency is bumped when the read observes the file, not after the decode, so a
+            // slow read can't lose its place to an eviction pass racing it.
             recordAccess(file)
+            val stored = json.decodeFromString(storedSerializer, file.readText())
             PersistedEntry(stored.value, stored.writtenAtMillis)
         } catch (cancellation: CancellationException) {
             throw cancellation
