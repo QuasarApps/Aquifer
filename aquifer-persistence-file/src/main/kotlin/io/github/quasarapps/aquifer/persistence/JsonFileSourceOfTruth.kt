@@ -343,8 +343,10 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
     private suspend fun heal(file: Path): PersistedEntry<V>? {
         if (bounded) {
             housekeeping.withLock {
-                runCatching { file.deleteIfExists() }
-                dropAccounting(file)
+                // Accounting is dropped only when the file is verifiably gone (deleted now,
+                // or already absent). A failed delete keeps the entry budgeted — the bytes
+                // are still on disk — matching the eviction loop's failure mode.
+                runCatching { file.deleteIfExists() }.onSuccess { dropAccounting(file) }
             }
         } else {
             runCatching { file.deleteIfExists() }
