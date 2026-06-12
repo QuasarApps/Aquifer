@@ -511,6 +511,9 @@ internal class RealAquifer<K : Any, V : Any>(
                 val (value, validator) = resolve(key, result, prior)
                 val committed: MemoryCache.Entry<V>? = commitGuard.withLock {
                     if (epochOf(key) == epoch) {
+                        // Cleared with the commit it celebrates: a read between commit and a
+                        // later clear could otherwise still see the stale suppression window.
+                        negative.remove(key)
                         val entry = MemoryCache.Entry(value, now, sequencer.incrementAndGet(), validator)
                         memory.put(key, entry)
                         persistFetched(key, value, now, validator)
@@ -522,7 +525,6 @@ internal class RealAquifer<K : Any, V : Any>(
                 // Re-check before broadcasting: a mutation may have raced the gap above, and
                 // observers should not see a fenced-off value even transiently.
                 if (committed != null && epochOf(key) == epoch) {
-                    negative.remove(key)
                     events.emit(Event.Updated(key, value, Origin.FETCHER, now, committed.sequence))
                 }
                 value

@@ -128,26 +128,29 @@ class NegativeCachingTest {
                 calls++
                 if (fail) throw Boom(calls) else calls
             }
+            freshness { timeToLive = 1.seconds } // lets later reads refetch without mutating
             negativeCache {
                 timeToLive = 10.seconds
                 backoffMultiplier = 2.0
             }
         }
 
-        assertFailsWith<Boom> { store.get("k") } // failure 1
+        assertFailsWith<Boom> { store.get("k") } // failure 1: window 10s
         clock.advanceBy(11.seconds)
-        assertFailsWith<Boom> { store.get("k") } // failure 2: window now 20s
+        assertFailsWith<Boom> { store.get("k") } // failure 2: window 20s
         clock.advanceBy(21.seconds)
 
         fail = false
-        assertEquals(3, store.fresh("k")) // success clears the memory entirely
-        store.invalidate("k")
+        assertEquals(3, store.get("k")) // success alone — no invalidate — clears the streak
 
+        clock.advanceBy(2.seconds) // cached 3 is now stale; the next read refetches
         fail = true
-        assertFailsWith<Boom> { store.get("k") } // fails again: count restarted...
-        clock.advanceBy(11.seconds) // ...so the window is 10s again, not 40s
-        assertFailsWith<Boom> { store.get("k") }
-        assertEquals(5, calls)
+        assertEquals(3, store.get("k")) // failure again: stale-if-error, streak restarted at 1
+        assertEquals(4, calls)
+
+        clock.advanceBy(11.seconds) // 11s > the 10s first-failure window, but < a 40s streak-3 one
+        assertEquals(3, store.get("k"))
+        assertEquals(5, calls, "a reset streak means the window is 10s again, not 40s")
     }
 
     @Test
