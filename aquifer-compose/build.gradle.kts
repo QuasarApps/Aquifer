@@ -73,7 +73,7 @@ mavenPublishing {
     pom {
         name.set("Aquifer Compose")
         description.set("Jetpack Compose integration for Aquifer: lifecycle-aware state collection and preview helpers.")
-        url.set("https://github.com/Quasar-Apps/api-library-example")
+        url.set("https://github.com/Quasar-Apps/aquifer")
         licenses {
             license {
                 name.set("The Apache License, Version 2.0")
@@ -88,9 +88,9 @@ mavenPublishing {
             }
         }
         scm {
-            url.set("https://github.com/Quasar-Apps/api-library-example")
-            connection.set("scm:git:git://github.com/Quasar-Apps/api-library-example.git")
-            developerConnection.set("scm:git:ssh://git@github.com/Quasar-Apps/api-library-example.git")
+            url.set("https://github.com/Quasar-Apps/aquifer")
+            connection.set("scm:git:git://github.com/Quasar-Apps/aquifer.git")
+            developerConnection.set("scm:git:ssh://git@github.com/Quasar-Apps/aquifer.git")
         }
     }
 }

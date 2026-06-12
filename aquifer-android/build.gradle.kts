@@ -62,7 +62,7 @@ mavenPublishing {
     pom {
         name.set("Aquifer Android")
         description.set("Android integrations for Aquifer: connectivity- and lifecycle-driven revalidation triggers.")
-        url.set("https://github.com/Quasar-Apps/api-library-example")
+        url.set("https://github.com/Quasar-Apps/aquifer")
         licenses {
             license {
                 name.set("The Apache License, Version 2.0")
@@ -77,9 +77,9 @@ mavenPublishing {
             }
         }
         scm {
-            url.set("https://github.com/Quasar-Apps/api-library-example")
-            connection.set("scm:git:git://github.com/Quasar-Apps/api-library-example.git")
-            developerConnection.set("scm:git:ssh://git@github.com/Quasar-Apps/api-library-example.git")
+            url.set("https://github.com/Quasar-Apps/aquifer")
+            connection.set("scm:git:git://github.com/Quasar-Apps/aquifer.git")
+            developerConnection.set("scm:git:ssh://git@github.com/Quasar-Apps/aquifer.git")
         }
     }
 }

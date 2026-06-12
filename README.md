@@ -1,6 +1,6 @@
 # Aquifer
 
-[![CI](https://github.com/Quasar-Apps/api-library-example/actions/workflows/ci.yml/badge.svg)](https://github.com/Quasar-Apps/api-library-example/actions/workflows/ci.yml)
+[![CI](https://github.com/Quasar-Apps/aquifer/actions/workflows/ci.yml/badge.svg)](https://github.com/Quasar-Apps/aquifer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Kotlin](https://img.shields.io/badge/kotlin-2.2-7F52FF.svg?logo=kotlin)](https://kotlinlang.org)
 
