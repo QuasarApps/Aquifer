@@ -9,7 +9,7 @@ package io.github.quasarapps.aquifer
  *
  * | Strategy               | Fresh entry | Stale entry                    | Missing entry |
  * |------------------------|-------------|--------------------------------|---------------|
- * | [CacheOnly]            | cache       | cache (stale)                  | error         |
+ * | [CacheOnly]            | cache       | cache (stale)                  | `get` throws, `stream` emits empty |
  * | [CacheFirst]           | cache       | fetch, stale on fetch failure  | fetch         |
  * | [StaleWhileRevalidate] | cache       | cache, then revalidate         | fetch         |
  * | [NetworkFirst]         | fetch       | fetch, stale on fetch failure  | fetch         |
