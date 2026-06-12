@@ -49,6 +49,20 @@ class BoundedJsonFileSourceOfTruthTest {
 
     private fun jsonFileCount(): Int = storeDir.listDirectoryEntries().count { it.extension == "json" }
 
+    /**
+     * Measures the real on-disk size of an entry carrying a [payloadLength]-char payload, so
+     * byte budgets in these tests track the actual JSON envelope instead of assuming its
+     * size. Entries with equal payload lengths have identical files (the key is only in the
+     * file *name*), making budgets like "2.5 entries" exact.
+     */
+    private suspend fun measuredEntryBytes(payloadLength: Int): Long {
+        val probe = store()
+        probe.put("probe", data = "p".repeat(payloadLength))
+        val bytes = Files.size(fileOf("probe"))
+        probe.delete("probe")
+        return bytes
+    }
+
     @Test
     fun `maxEntries evicts the least recently written entry`() = runTest {
         val store = store(maxEntries = 2)
@@ -92,9 +106,9 @@ class BoundedJsonFileSourceOfTruthTest {
 
     @Test
     fun `maxBytes evicts eldest entries until the total fits`() = runTest {
-        // Each file is its ~1000-char payload plus a fixed envelope well under 100 bytes:
-        // two entries fit a 2200-byte budget, three cannot.
-        val store = store(maxBytes = 2200)
+        // A budget of 2.5 measured entries: two fit, three cannot.
+        val entryBytes = measuredEntryBytes(payloadLength = 1000)
+        val store = store(maxBytes = entryBytes * 5 / 2)
         store.put("a", data = "x".repeat(1000))
         store.put("b", data = "y".repeat(1000))
         store.put("c", data = "z".repeat(1000))
@@ -106,7 +120,9 @@ class BoundedJsonFileSourceOfTruthTest {
 
     @Test
     fun `an entry larger than maxBytes alone never persists`() = runTest {
-        val store = store(maxBytes = 500)
+        // One byte short of a single entry: the write lands and is immediately evicted.
+        val entryBytes = measuredEntryBytes(payloadLength = 1000)
+        val store = store(maxBytes = entryBytes - 1)
         store.put("huge", data = "x".repeat(1000))
 
         assertNull(store.read("huge"))
@@ -116,7 +132,8 @@ class BoundedJsonFileSourceOfTruthTest {
     @Test
     fun `both caps are enforced together`() = runTest {
         // Entry budget allows three, byte budget only two of these.
-        val store = store(maxEntries = 3, maxBytes = 2200)
+        val entryBytes = measuredEntryBytes(payloadLength = 1000)
+        val store = store(maxEntries = 3, maxBytes = entryBytes * 5 / 2)
         store.put("a", data = "x".repeat(1000))
         store.put("b", data = "y".repeat(1000))
         store.put("c", data = "z".repeat(1000))
@@ -154,7 +171,8 @@ class BoundedJsonFileSourceOfTruthTest {
 
     @Test
     fun `a healed corrupt file frees its budget share`() = runTest {
-        val store = store(maxBytes = 2200)
+        val entryBytes = measuredEntryBytes(payloadLength = 1000)
+        val store = store(maxBytes = entryBytes * 5 / 2)
         store.put("a", data = "x".repeat(1000))
         store.put("b", data = "y".repeat(1000))
         fileOf("a").writeText("{ not json")

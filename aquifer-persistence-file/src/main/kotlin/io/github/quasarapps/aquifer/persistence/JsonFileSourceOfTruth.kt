@@ -134,7 +134,7 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
         try {
             ensureHousekeeping()
             if (!file.exists()) {
-                forget(file)
+                forgetIfMissing(file)
                 return@withContext null
             }
             val stored = json.decodeFromString(storedSerializer, file.readText())
@@ -313,10 +313,16 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
         }
     }
 
-    /** Drops [file] from the LRU accounting (healed away or externally missing). */
-    private suspend fun forget(file: Path) {
+    /**
+     * Drops [file]'s accounting only if it is still absent — re-checked under the lock, so
+     * a same-key write that lands between the caller's miss and this call keeps the fresh
+     * record it just made.
+     */
+    private suspend fun forgetIfMissing(file: Path) {
         if (!bounded) return
-        housekeeping.withLock { dropAccounting(file) }
+        housekeeping.withLock {
+            if (!file.exists()) dropAccounting(file)
+        }
     }
 
     /** Removes [file]'s accounting entry. Caller holds [housekeeping]. */
@@ -324,10 +330,21 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
         index.remove(file.fileName.toString())?.let { size -> totalBytes -= size }
     }
 
-    /** Deletes an unreadable file so the slot heals; the entry is reported as absent. */
+    /**
+     * Deletes an unreadable file so the slot heals; the entry is reported as absent. The
+     * delete and the accounting drop commit together — like [delete] — so a racing
+     * same-key write is either fully before this (its file is the one healed away) or
+     * fully after (its record survives untouched), never half-observed.
+     */
     private suspend fun heal(file: Path): PersistedEntry<V>? {
-        runCatching { file.deleteIfExists() }
-        forget(file)
+        if (bounded) {
+            housekeeping.withLock {
+                runCatching { file.deleteIfExists() }
+                dropAccounting(file)
+            }
+        } else {
+            runCatching { file.deleteIfExists() }
+        }
         return null
     }
 
