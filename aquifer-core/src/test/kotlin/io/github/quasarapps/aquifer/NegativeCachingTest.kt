@@ -9,6 +9,8 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.microseconds
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -223,6 +225,26 @@ class NegativeCachingTest {
         assertFailsWith<Boom> { store.get("k") }
 
         assertEquals(listOf("k" to 20.seconds), suppressions)
+    }
+
+    @Test
+    fun `sub-millisecond windows still suppress until the next clock tick`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { throw Boom(++calls) }
+            negativeCache { timeToLive = 500.microseconds }
+        }
+
+        assertFailsWith<Boom> { store.get("k") }
+        assertFailsWith<Boom> { store.get("k") } // same tick: deadline rounded up, suppressed
+        assertEquals(1, calls)
+
+        clock.advanceBy(1.milliseconds)
+        assertFailsWith<Boom> { store.get("k") }
+        assertEquals(2, calls)
     }
 
     @Test

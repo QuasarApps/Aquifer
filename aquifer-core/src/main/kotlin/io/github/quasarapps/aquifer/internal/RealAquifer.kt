@@ -141,7 +141,12 @@ internal class RealAquifer<K : Any, V : Any>(
         val policy = negativeCache ?: return
         val failures = (negative[key]?.consecutiveFailures ?: 0) + 1
         val window = policy.windowFor(failures)
-        negative[key] = NegativeEntry(failure, failures, clock.nowMillis() + window.inWholeMilliseconds)
+        // Millisecond deadlines on a millisecond clock: round the window UP, so a
+        // sub-millisecond timeToLive still suppresses until the next tick instead of
+        // truncating to "never" (the same hazard isExpired avoids for maxAge).
+        val floor = window.inWholeMilliseconds
+        val windowMillis = if (floor.milliseconds < window) floor + 1 else floor
+        negative[key] = NegativeEntry(failure, failures, clock.nowMillis() + windowMillis)
     }
 
     init {
