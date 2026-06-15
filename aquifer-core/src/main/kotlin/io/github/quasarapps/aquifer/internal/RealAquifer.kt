@@ -353,7 +353,8 @@ internal class RealAquifer<K : Any, V : Any>(
         if (keys.isEmpty()) return emptyMap()
         // Per key: snapshot the cache and decide who needs a network fetch, with get's exact
         // primitives (wantsFetch + the negative-cache gate). One-shot, so a wanted fetch is
-        // awaited — there is no SWR background revalidation here (use streamMany for that).
+        // awaited — there is no SWR background revalidation here (collect stream() per key for
+        // serve-stale-then-revalidate).
         val cached = LinkedHashMap<K, V>()
         val toFetch = LinkedHashSet<K>()
         for (key in keys) {
@@ -408,9 +409,10 @@ internal class RealAquifer<K : Any, V : Any>(
                     // shared fetch becomes AquiferException, matching get()/close()'s contract.
                     coroutineContext.ensureActive()
                     throw AquiferException("Aquifer was closed during getAll", cancellation)
-                } catch (@Suppress("TooGenericExceptionCaught") ignored: Throwable) {
+                } catch (@Suppress("TooGenericExceptionCaught") ignored: Exception) {
                     // This key failed (batch omitted it, or the call threw); its error already
                     // surfaced through AquiferEvents. Omit it — getAll returns the resolved set.
+                    // Caught as Exception, not Throwable, so a fatal Error still propagates.
                 }
             }
         }
