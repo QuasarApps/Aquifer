@@ -3,6 +3,7 @@ package io.github.quasarapps.aquifer.internal
 import io.github.quasarapps.aquifer.Aquifer
 import io.github.quasarapps.aquifer.AquiferEvents
 import io.github.quasarapps.aquifer.AquiferException
+import io.github.quasarapps.aquifer.BatchKeyMissingException
 import io.github.quasarapps.aquifer.CacheMissException
 import io.github.quasarapps.aquifer.DataState
 import io.github.quasarapps.aquifer.FetchResult
@@ -49,6 +50,8 @@ internal class RealAquifer<K : Any, V : Any>(
     private val fetcher: suspend (key: K, validator: String?) -> FetchResult<V>,
     /** Whether [fetcher] consults validators; plain stores skip the pre-fetch entry read. */
     private val conditional: Boolean,
+    /** Resolves many keys in one backend call; `null` means [getAll] fetches keys individually. */
+    private val batchFetcher: (suspend (keys: Set<K>) -> Map<K, V>)? = null,
     /** Failure-memory parameters; `null` disables negative caching entirely. */
     private val negativeCache: NegativeCachePolicy? = null,
     private val timeToLive: Duration,
@@ -344,6 +347,70 @@ internal class RealAquifer<K : Any, V : Any>(
         }
     }
 
+    override suspend fun getAll(keys: Set<K>, freshness: Freshness): Map<K, V> {
+        checkOpen()
+        if (keys.isEmpty()) return emptyMap()
+        // Per key: snapshot the cache and decide who needs a network fetch, with get's exact
+        // primitives (wantsFetch + the negative-cache gate). One-shot, so a wanted fetch is
+        // awaited — there is no SWR background revalidation here (use streamMany for that).
+        val cached = LinkedHashMap<K, V>()
+        val toFetch = LinkedHashSet<K>()
+        for (key in keys) {
+            val entry = if (freshness == Freshness.NetworkOnly) null else load(key)?.entry
+            if (entry != null) cached[key] = entry.value
+            val needsValue = entry == null || isExpired(key, entry.writtenAtMillis)
+            val wantsFetch = wantsFetch(freshness, needsValue)
+            if (wantsFetch && fetchBlock(key, wantsFetch, freshness) == null) toFetch += key
+        }
+        val fetched = batchRefresh(toFetch)
+        // Prefer the freshly-fetched value, fall back to the cached one (stale-if-error); a
+        // key that neither resolved nor had a cached fallback is omitted from the result.
+        return buildMap(keys.size) {
+            for (key in keys) (fetched[key] ?: cached[key])?.let { put(key, it) }
+        }
+    }
+
+    /**
+     * Fetches [keys] through one [batchFetcher] call (or independent single fetches when none
+     * is configured), reusing the per-key single-flight machinery via [refreshWith]. Keys
+     * already in flight as single fetches are joined, not re-requested. Returns only the keys
+     * that resolved; a key the batch omits, or whose fetch throws, is absent (its error has
+     * already surfaced through [AquiferEvents]).
+     */
+    private suspend fun batchRefresh(keys: Set<K>): Map<K, V> {
+        if (keys.isEmpty()) return emptyMap()
+        val batch = batchFetcher
+        val deferreds = LinkedHashMap<K, Deferred<V>>()
+        if (batch == null) {
+            for (key in keys) deferreds[key] = refresh(key)
+        } else {
+            // Only keys not already in flight need the shared call; the rest join theirs.
+            val fresh = keys.filterNot { inFlight.containsKey(it) }.toSet()
+            val batchCall: Deferred<Map<K, V>>? =
+                if (fresh.isEmpty()) null else scope.async(start = CoroutineStart.LAZY) { batch(fresh) }
+            for (key in fresh) {
+                deferreds[key] = refreshWith(key) { _, _ ->
+                    FetchResult.Fresh(batchCall!!.await()[key] ?: throw BatchKeyMissingException(key))
+                }
+            }
+            // Start the shared call only once every slice is registered to await it.
+            batchCall?.start()
+            for (key in keys) if (key !in fresh) deferreds[key] = refresh(key)
+        }
+        return buildMap(deferreds.size) {
+            for ((key, deferred) in deferreds) {
+                try {
+                    put(key, deferred.await())
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (@Suppress("TooGenericExceptionCaught") ignored: Throwable) {
+                    // This key failed (batch omitted it, or the call threw); its error already
+                    // surfaced through AquiferEvents. Omit it — getAll returns the resolved set.
+                }
+            }
+        }
+    }
+
     override suspend fun put(key: K, value: V) {
         checkOpen()
         val now = clock.nowMillis()
@@ -538,7 +605,21 @@ internal class RealAquifer<K : Any, V : Any>(
      * in the store's scope so it completes — and lands in the cache — even if every caller that
      * was awaiting it has been cancelled. Progress and outcome are broadcast on the bus.
      */
-    private fun refresh(key: K): Deferred<V> {
+    private fun refresh(key: K): Deferred<V> = refreshWith(key) { prior, setAttempts ->
+        fetchWithRetry(key, prior?.validator, setAttempts)
+    }
+
+    /**
+     * Starts (or joins) a single-flight fetch for [key], with [transport] supplying the value.
+     * The single-key path retries via [fetchWithRetry]; a batch ([getAll]) passes a transport
+     * that awaits a shared multi-key call. Everything around the transport — single-flight
+     * dedup, epoch fencing, the commit, negative-cache, persistence, and `Fetching`/`Updated`/
+     * `Failed` events — is identical for both, so batching changes only the wire call.
+     */
+    private fun refreshWith(
+        key: K,
+        transport: suspend (prior: MemoryCache.Entry<V>?, setAttempts: (Int) -> Unit) -> FetchResult<V>,
+    ): Deferred<V> {
         inFlight[key]?.let { return it }
         val pending = scope.async(start = CoroutineStart.LAZY) {
             var attempts = 1
@@ -552,43 +633,16 @@ internal class RealAquifer<K : Any, V : Any>(
                 // fences the commit regardless. Plain stores skip this read entirely.
                 val prior = if (conditional) load(key)?.entry else null
                 val startedAt = clock.nowMillis()
-                val result = fetchWithRetry(key, prior?.validator) { attempts = it }
+                val result = transport(prior) { attempts = it }
                 val now = clock.nowMillis()
                 notify { onFetchSucceeded(key, (now - startedAt).milliseconds) }
                 val (value, validator) = resolve(key, result, prior)
-                val committed: MemoryCache.Entry<V>? = commitGuard.withLock {
-                    if (epochOf(key) == epoch) {
-                        // Cleared with the commit it celebrates: a read between commit and a
-                        // later clear could otherwise still see the stale suppression window.
-                        negative.remove(key)
-                        val entry = MemoryCache.Entry(value, now, sequencer.incrementAndGet(), validator)
-                        memory.put(key, entry)
-                        persistFetched(key, value, now, validator)
-                        entry
-                    } else {
-                        null
-                    }
-                }
-                // Re-check before broadcasting: a mutation may have raced the gap above, and
-                // observers should not see a fenced-off value even transiently.
-                if (committed != null && epochOf(key) == epoch) {
-                    events.emit(Event.Updated(key, value, Origin.FETCHER, now, committed.sequence))
-                }
+                commitFetched(key, epoch, value, validator, now)
                 value
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (@Suppress("TooGenericExceptionCaught") failure: Throwable) {
-                notify { onFetchFailed(key, failure, attempts) }
-                // A failure of a fenced-off fetch is stale news; observers already moved on.
-                // The check and the record commit together under the guard, so a racing
-                // put/invalidate can't have its just-cleared failure memory re-poisoned by
-                // a terminal failure that observed the pre-mutation epoch.
-                val current = commitGuard.withLock {
-                    (epochOf(key) == epoch).also { if (it) recordFailure(key, failure) }
-                }
-                if (current) {
-                    events.emit(Event.Failed(key, failure))
-                }
+                failFetch(key, epoch, failure, attempts)
                 throw failure
             }
         }
@@ -601,6 +655,48 @@ internal class RealAquifer<K : Any, V : Any>(
         pending.invokeOnCompletion { inFlight.remove(key, pending) }
         pending.start()
         return pending
+    }
+
+    /**
+     * Commits a freshly-fetched [value] for [key] when its [epoch] is still current: clears
+     * the negative-cache record, writes memory and persistence, and broadcasts `Updated`. A
+     * mutation that raced the fetch leaves the epoch moved, and the commit is dropped.
+     */
+    private suspend fun commitFetched(key: K, epoch: Pair<Long, Long>, value: V, validator: String?, now: Long) {
+        val committed: MemoryCache.Entry<V>? = commitGuard.withLock {
+            if (epochOf(key) == epoch) {
+                // Cleared with the commit it celebrates: a read between commit and a later
+                // clear could otherwise still see the stale suppression window.
+                negative.remove(key)
+                val entry = MemoryCache.Entry(value, now, sequencer.incrementAndGet(), validator)
+                memory.put(key, entry)
+                persistFetched(key, value, now, validator)
+                entry
+            } else {
+                null
+            }
+        }
+        // Re-check before broadcasting: a mutation may have raced the gap above, and observers
+        // should not see a fenced-off value even transiently.
+        if (committed != null && epochOf(key) == epoch) {
+            events.emit(Event.Updated(key, value, Origin.FETCHER, now, committed.sequence))
+        }
+    }
+
+    /**
+     * Records and broadcasts a terminal fetch [failure] for [key] when its [epoch] is current.
+     * The epoch check and the negative-cache record commit together under [commitGuard], so a
+     * racing put/invalidate can't have its just-cleared failure memory re-poisoned by a
+     * failure that observed the pre-mutation epoch.
+     */
+    private suspend fun failFetch(key: K, epoch: Pair<Long, Long>, failure: Throwable, attempts: Int) {
+        notify { onFetchFailed(key, failure, attempts) }
+        val current = commitGuard.withLock {
+            (epochOf(key) == epoch).also { if (it) recordFailure(key, failure) }
+        }
+        if (current) {
+            events.emit(Event.Failed(key, failure))
+        }
     }
 
     /**
