@@ -8,6 +8,7 @@ import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 
@@ -164,6 +165,7 @@ class CoalescingWindowTest {
 
     @Test
     fun `window and batch-size are validated`() {
+        // A non-positive window must use the plain batchFetcher overload, not the coalescing one.
         assertFailsWith<IllegalArgumentException> {
             aquifer<String, Int> {
                 batchFetcher(coalesceWindow = (-1).milliseconds) { keys -> keys.associateWith { 1 } }
@@ -171,7 +173,12 @@ class CoalescingWindowTest {
         }
         assertFailsWith<IllegalArgumentException> {
             aquifer<String, Int> {
-                batchFetcher(maxBatchSize = 0) { keys -> keys.associateWith { 1 } }
+                batchFetcher(coalesceWindow = Duration.ZERO) { keys -> keys.associateWith { 1 } }
+            }
+        }
+        assertFailsWith<IllegalArgumentException> {
+            aquifer<String, Int> {
+                batchFetcher(coalesceWindow = 10.milliseconds, maxBatchSize = 0) { keys -> keys.associateWith { 1 } }
             }
         }
     }

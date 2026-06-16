@@ -88,27 +88,34 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      *
      * Configure exactly one of [fetcher], [conditionalFetcher], or [batchFetcher]. Every other
      * guarantee (single-flight dedup, fencing, negative caching, persistence, events) applies
-     * per key, unchanged — batching is purely a fetch-transport optimization.
+     * per key, unchanged — batching is purely a fetch-transport optimization. To also
+     * auto-coalesce individual fetches, use the [coalesceWindow][batchFetcher] overload.
+     */
+    public fun batchFetcher(fetch: suspend (keys: Set<K>) -> Map<K, V>) {
+        batchFetcher = fetch
+    }
+
+    /**
+     * A [batchFetcher] that additionally **auto-coalesces** individual `get`/`stream`/
+     * `prefetch` fetches landing within [coalesceWindow] of each other into one [fetch] call
+     * (DataLoader-style) — unchanged call sites, fewer round-trips. The batch dispatches when
+     * the window elapses or once [maxBatchSize] distinct keys accumulate. [Aquifer.getAll]
+     * always dispatches its own keys immediately, regardless of the window.
      *
-     * With a positive [coalesceWindow], individual `get`/`stream`/`prefetch` fetches that fall
-     * within the window of each other are auto-batched into one [fetch] call (DataLoader-style)
-     * — unchanged call sites, fewer round-trips — dispatching when the window elapses or once
-     * [maxBatchSize] distinct keys accumulate. The default zero window keeps each single-key
-     * fetch a batch of one. [Aquifer.getAll] always dispatches its own keys immediately,
-     * regardless of the window. (Each coalesced single-key fetch is still retried by the
-     * store's [retry] policy, re-entering the next window; the multi-key call `getAll` issues
-     * is not — add retry inside this lambda if you need it. Whole-batch retry: RFC #29.)
+     * Each coalesced single-key fetch is still retried by the store's [retry] policy,
+     * re-entering the next window; the multi-key call `getAll` issues is not — add retry inside
+     * [fetch] if you need it. Whole-batch retry: RFC #29.
      *
-     * @param coalesceWindow how long to gather keys before dispatching a batch; must not be
-     *   negative. Zero (the default) disables auto-coalescing.
+     * @param coalesceWindow how long to gather keys before dispatching a batch; must be
+     *   positive (use the single-argument [batchFetcher] for no coalescing).
      * @param maxBatchSize dispatch early once this many distinct keys accumulate; must be ≥ 1.
      */
     public fun batchFetcher(
-        coalesceWindow: Duration = Duration.ZERO,
+        coalesceWindow: Duration,
         maxBatchSize: Int = Int.MAX_VALUE,
         fetch: suspend (keys: Set<K>) -> Map<K, V>,
     ) {
-        require(!coalesceWindow.isNegative()) { "coalesceWindow must not be negative, was $coalesceWindow" }
+        require(coalesceWindow.isPositive()) { "coalesceWindow must be positive, was $coalesceWindow" }
         require(maxBatchSize >= 1) { "maxBatchSize must be at least 1, was $maxBatchSize" }
         batchFetcher = fetch
         this.coalesceWindow = coalesceWindow
