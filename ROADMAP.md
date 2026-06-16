@@ -136,7 +136,7 @@ The engine's guarantees deserve machine-checked evidence.
 Small, high-frequency conveniences surfaced while building the feature set; each must keep
 the existing fencing and single-flight guarantees.
 
-- [ ] **`invalidateWhere { key -> Bool }`** — predicate/bulk invalidation between the
+- [ ] **`invalidateWhere { key -> Boolean }`** — predicate/bulk invalidation between the
   surgical `invalidate(key)` and the nuclear `invalidateAll()`, for "drop everything for this
   tenant/scope" resets. Must fence each matched key under `commitGuard`, like `invalidate`. *(S)*
 - [ ] **`putAll(entries)`** — bulk local write, the write-side mirror of `getAll`: seed many
