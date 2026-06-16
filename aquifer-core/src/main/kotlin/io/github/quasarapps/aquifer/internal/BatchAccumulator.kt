@@ -44,6 +44,10 @@ internal class BatchAccumulator<K : Any, V : Any>(
 
     /** Enqueues [key] into the current window and suspends until its batch resolves it. */
     suspend fun load(key: K): V {
+        // Drained under the lock, but dispatched *after* releasing it: launching the fetch
+        // inside `withLock` could, on an immediate dispatcher, run it inline while the lock is
+        // still held and stall enqueuers.
+        var ready: Map<K, CompletableDeferred<V>>? = null
         val slot = mutex.withLock {
             val existing = pending[key]
             if (existing != null) {
@@ -52,30 +56,34 @@ internal class BatchAccumulator<K : Any, V : Any>(
                 val fresh = CompletableDeferred<V>()
                 pending[key] = fresh
                 when {
-                    pending.size >= maxBatchSize -> flush() // full: dispatch immediately
+                    pending.size >= maxBatchSize -> {
+                        // Full: cancel the open window's timer and dispatch immediately.
+                        flushTimer?.cancel()
+                        flushTimer = null
+                        ready = drain()
+                    }
                     flushTimer == null -> flushTimer = scope.launch {
                         delay(window)
-                        mutex.withLock { flush() }
+                        val batch = mutex.withLock {
+                            flushTimer = null // this window is firing; let the next load reschedule
+                            drain()
+                        }
+                        if (batch.isNotEmpty()) dispatch(batch)
                     }
                 }
                 fresh
             }
         }
+        ready?.let { scope.launch { dispatch(it) } }
         return slot.await()
     }
 
-    /**
-     * Drains and dispatches the pending batch. Caller holds [mutex]; never suspends. Cancels
-     * the open window's timer so an early ([maxBatchSize]) dispatch can't leave a stale timer
-     * that would flush the *next* window before its own [window] elapses.
-     */
-    private fun flush() {
-        flushTimer?.cancel()
-        flushTimer = null
-        if (pending.isEmpty()) return
+    /** Removes and returns the pending batch (empty if none). Caller holds [mutex]. */
+    private fun drain(): Map<K, CompletableDeferred<V>> {
+        if (pending.isEmpty()) return emptyMap()
         val batch = LinkedHashMap(pending)
         pending.clear()
-        scope.launch { dispatch(batch) }
+        return batch
     }
 
     private suspend fun dispatch(batch: Map<K, CompletableDeferred<V>>) {
