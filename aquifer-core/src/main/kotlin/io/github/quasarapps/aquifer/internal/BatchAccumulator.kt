@@ -4,6 +4,7 @@ import io.github.quasarapps.aquifer.BatchKeyMissingException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -22,9 +23,11 @@ import kotlin.time.Duration
  *   `fetch` fails every key in that batch (its callers' retry, if any, re-enqueues them).
  *
  * The mutex is held only for the O(1) enqueue/schedule bookkeeping — never across [fetch] or
- * an `await` — so a slow backend can't stall enqueuers. All scheduling runs in [scope]; under
- * virtual time the [window] delay is skipped while the test is idle, so a synchronous burst of
- * loads still coalesces.
+ * an `await` — so a slow backend can't stall enqueuers. All scheduling runs in [scope], and a
+ * [load] only ever runs inside that scope (the engine calls it from the per-key fetch
+ * coroutine), so closing the store cancels every awaiter rather than leaving a slot dangling.
+ * Under virtual time the [window] delay is skipped while the test is idle, so a synchronous
+ * burst of loads still coalesces.
  */
 internal class BatchAccumulator<K : Any, V : Any>(
     private val scope: CoroutineScope,
@@ -34,7 +37,9 @@ internal class BatchAccumulator<K : Any, V : Any>(
 ) {
     private val mutex = Mutex()
     private val pending = LinkedHashMap<K, CompletableDeferred<V>>()
-    private var flushScheduled = false
+
+    /** The current window's flush timer, or `null` when no window is open. Guarded by [mutex]. */
+    private var flushTimer: Job? = null
 
     /** Enqueues [key] into the current window and suspends until its batch resolves it. */
     suspend fun load(key: K): V {
@@ -47,12 +52,9 @@ internal class BatchAccumulator<K : Any, V : Any>(
                 pending[key] = fresh
                 when {
                     pending.size >= maxBatchSize -> flush() // full: dispatch immediately
-                    !flushScheduled -> {
-                        flushScheduled = true
-                        scope.launch {
-                            delay(window)
-                            mutex.withLock { if (flushScheduled) flush() }
-                        }
+                    flushTimer == null -> flushTimer = scope.launch {
+                        delay(window)
+                        mutex.withLock { flush() }
                     }
                 }
                 fresh
@@ -61,9 +63,14 @@ internal class BatchAccumulator<K : Any, V : Any>(
         return slot.await()
     }
 
-    /** Drains and dispatches the pending batch. Caller holds [mutex]; never suspends. */
+    /**
+     * Drains and dispatches the pending batch. Caller holds [mutex]; never suspends. Cancels
+     * the open window's timer so an early ([maxBatchSize]) dispatch can't leave a stale timer
+     * that would flush the *next* window before its own [window] elapses.
+     */
     private fun flush() {
-        flushScheduled = false
+        flushTimer?.cancel()
+        flushTimer = null
         if (pending.isEmpty()) return
         val batch = LinkedHashMap(pending)
         pending.clear()

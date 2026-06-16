@@ -1,6 +1,8 @@
 package io.github.quasarapps.aquifer
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import java.io.IOException
 import kotlin.test.Test
@@ -70,6 +72,40 @@ class CoalescingWindowTest {
         assertEquals(listOf(setOf("a", "bb")), batches, "the full batch fired without waiting")
 
         assertEquals(3, c.await()) // advances past the window for the overflow key
+        assertEquals(listOf(setOf("a", "bb"), setOf("ccc")), batches)
+    }
+
+    @Test
+    fun `an early maxBatchSize dispatch does not cut the next window short`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher(coalesceWindow = 10.milliseconds, maxBatchSize = 2) { keys ->
+                batches += keys
+                keys.associateWith { it.length }
+            }
+        }
+
+        // Window 1 at t=0: two keys hit maxBatchSize and dispatch at once (its timer is cancelled).
+        val a = async { store.get("a") }
+        val b = async { store.get("bb") }
+        runCurrent()
+        assertEquals(1, a.await())
+        assertEquals(2, b.await())
+        assertEquals(listOf(setOf("a", "bb")), batches)
+
+        // Window 2 opens at t=5ms; its own 10ms window must govern — a stale window-1 timer
+        // (deadline t=10ms) must not flush it early.
+        advanceTimeBy(5.milliseconds)
+        val c = async { store.get("ccc") }
+        runCurrent()
+        advanceTimeBy(9.milliseconds) // t=14ms < 5+10; window 2 has not elapsed
+        runCurrent()
+        assertEquals(listOf(setOf("a", "bb")), batches, "window 2 must not flush before its own deadline")
+
+        advanceTimeBy(2.milliseconds) // t=16ms > 15; now it fires
+        runCurrent()
+        assertEquals(3, c.await())
         assertEquals(listOf(setOf("a", "bb"), setOf("ccc")), batches)
     }
 
