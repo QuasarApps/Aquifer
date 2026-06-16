@@ -86,12 +86,13 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   the per-key machinery (single-flight, fencing, negative caching, persistence, events) so
   batching is a pure transport optimization; a single `get`/`stream`/`prefetch` is a batch of
   one. Returns the resolved subset (per-key failures omitted, not thrown). *(L)*
-- [~] **Batched fetching, phase 2** (RFC #29) — the DataLoader coalescing window
+- [x] **Batched fetching, phase 2 — coalescing window** (RFC #29) — the DataLoader window
   (`batchFetcher(coalesceWindow, maxBatchSize)`) that auto-batches individual
-  `get`/`stream`/`prefetch` fetches is **shipped**: window/size-triggered flush, same-key slot
-  sharing, retry that re-enters the next window. Still open: `streamMany(keys)`,
+  `get`/`stream`/`prefetch` fetches: window/size-triggered flush, same-key slot sharing, and
+  retry that re-enters the next window. *(M)*
+- [ ] **Batched fetching, phase 2 — remaining** (RFC #29) — `streamMany(keys)`,
   `prefetchAll(keys)`, and dedicated whole-batch retry (retry-all vs. retry-failed slice, plus
-  per-key `onFetchRetried` event semantics). *(L)*
+  per-key `onFetchRetried` event semantics). *(M)*
 - [ ] **Conditional batch fetching** — a validator-aware `batchFetcher` variant so ETag/304
   revalidation composes with batching; deferred from RFC #29 as out of scope for v1 (a plain
   batch fetcher carries no per-key validators). *(M)*
