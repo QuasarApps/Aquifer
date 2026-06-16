@@ -8,6 +8,7 @@ import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -161,6 +162,20 @@ class CoalescingWindowTest {
 
         assertEquals(1, ok.await())
         assertFailsWith<BatchKeyMissingException> { gone.await().getOrThrow() }
+    }
+
+    @Test
+    fun `the plain batchFetcher overload disables a previously-set coalescing window`() = runTest {
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher(coalesceWindow = 1.minutes) { keys -> keys.associateWith { it.length } }
+            batchFetcher { keys -> keys.associateWith { it.length } } // last call wins: no coalescing
+        }
+
+        val d = async { store.get("a") }
+        runCurrent() // no virtual-time advance: a batch-of-one must resolve without a window wait
+        assertTrue(d.isCompleted, "the plain overload should not coalesce")
+        assertEquals(1, d.await())
     }
 
     @Test

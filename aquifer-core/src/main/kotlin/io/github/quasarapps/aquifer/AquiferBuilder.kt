@@ -93,6 +93,10 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      */
     public fun batchFetcher(fetch: suspend (keys: Set<K>) -> Map<K, V>) {
         batchFetcher = fetch
+        // The last batchFetcher call fully defines batching: clear any coalescing a prior
+        // call to the overload below may have set, so the plain form means "no coalescing".
+        coalesceWindow = Duration.ZERO
+        maxBatchSize = Int.MAX_VALUE
     }
 
     /**
