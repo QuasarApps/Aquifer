@@ -182,6 +182,11 @@ Already holding the data — a websocket frame, a paginated payload? `putAll(ent
 write-side mirror: it seeds many keys in one fenced commit (one update per key), the bulk form of
 `put`.
 
+Dropping data is symmetric. `invalidate(key)` evicts one key and `invalidateAll()` wipes
+everything; `invalidateWhere { it.startsWith("tenant:") }` is the predicate middle ground — clear a
+whole scope in one fenced commit, each matched key fenced exactly like `invalidate`, for
+"drop everything for this tenant" resets.
+
 Add a `coalesceWindow` and even *unrelated* `get`/`stream`/`prefetch` calls auto-batch — the
 DataLoader pattern, with no change to call sites:
 

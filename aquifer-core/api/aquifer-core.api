@@ -7,6 +7,7 @@ public abstract interface class io/github/quasarapps/aquifer/Aquifer : java/lang
 	public static synthetic fun getAll$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/util/Set;Lio/github/quasarapps/aquifer/Freshness;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun invalidate (Ljava/lang/Object;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun invalidateAll (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun invalidateWhere (Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun prefetch (Ljava/lang/Object;Lio/github/quasarapps/aquifer/Freshness;)V
 	public static synthetic fun prefetch$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/lang/Object;Lio/github/quasarapps/aquifer/Freshness;ILjava/lang/Object;)V
 	public abstract fun prefetchAll (Ljava/util/Set;Lio/github/quasarapps/aquifer/Freshness;)V

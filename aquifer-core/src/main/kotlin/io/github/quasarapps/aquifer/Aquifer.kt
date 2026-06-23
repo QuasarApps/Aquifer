@@ -32,8 +32,9 @@ import kotlin.time.Duration
  * needed; for app-wide singletons that is typically never.
  */
 // The public contract: each function is a distinct, cohesive cache operation — not a class
-// to decompose. (read/observe: stream, get, fresh, prefetch, getAll; mutate: put, invalidate,
-// invalidateAll; revalidate: revalidateActive, revalidateOn; lifecycle: close.)
+// to decompose. (read/observe: stream, get, fresh, prefetch, getAll; mutate: put, putAll,
+// invalidate, invalidateWhere, invalidateAll; revalidate: revalidateActive, revalidateOn;
+// lifecycle: close.)
 @Suppress("TooManyFunctions")
 public interface Aquifer<K : Any, V : Any> : AutoCloseable {
 
@@ -216,6 +217,22 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * state is how a cache-only screen learns the data is gone.
      */
     public suspend fun invalidate(key: K)
+
+    /**
+     * Drops every cached entry whose key matches [predicate] — the bulk middle ground between
+     * the surgical [invalidate] and the nuclear [invalidateAll], for "drop everything for this
+     * tenant/scope" resets. Each matched key is dropped and fenced exactly as [invalidate]
+     * would (memory and persistence cleared, any in-flight fetch fenced off, negative-cache
+     * record cleared), and its observers see the deletion the same way, in one fenced commit.
+     *
+     * [predicate] is tested against the keys this store currently tracks in the process —
+     * resident memory entries, active fetch-capable streams, in-flight fetches, and negative-cache
+     * and write-epoch records — and runs outside the commit lock, so it must not call back into the
+     * store. A [SourceOfTruth] cannot enumerate its keys, so a key tracked in none of those — a
+     * persisted entry evicted from memory and never re-touched, or one never loaded this run — is
+     * out of reach; use [invalidateAll] for a full wipe regardless of what is currently loaded.
+     */
+    public suspend fun invalidateWhere(predicate: (K) -> Boolean)
 
     /**
      * Drops all cached entries, in memory and in persistence, with the same fencing and
