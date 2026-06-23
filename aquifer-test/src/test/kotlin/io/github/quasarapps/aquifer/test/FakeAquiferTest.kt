@@ -180,6 +180,21 @@ class FakeAquiferTest {
     }
 
     @Test
+    fun `a stream over a cached key projects it without fetching, even for NetworkOnly`() = runTest {
+        // Streams fetch only on a miss; network-priority force-refetch is a one-shot-read behavior,
+        // so a stream never surfaces a stale cached value via Loading/Failure.
+        val store = fakeAquifer<String, Int>(backgroundScope) {
+            seed("a" to 1)
+            returns("a", 2)
+        }
+
+        store.stream("a", Freshness.NetworkOnly).test {
+            assertEquals(DataState.Content(1, Origin.MEMORY, isStale = false), awaitItem())
+        }
+        assertEquals(0, store.fetchCount("a"))
+    }
+
+    @Test
     fun `a cache-only stream of a missing key is Empty`() = runTest {
         val store = fakeAquifer<String, Int>(backgroundScope) { fetcher { -1 } }
 

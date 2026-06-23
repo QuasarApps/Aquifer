@@ -113,12 +113,15 @@ public class FakeAquiferBuilder<K : Any, V : Any> internal constructor() {
  * response between calls (e.g. fail once, then succeed).
  *
  * Simplifications relative to a real store, all in service of determinism: no time-to-live (cached
- * values never go stale on their own); [stream] fetches once on first collection for a missing,
- * fetch-capable key and then mirrors cache changes, but does not auto-revalidate on invalidation
- * and reports every [DataState.Content] as [Origin.MEMORY]; [revalidateActive]/[revalidateOn] are
- * no-ops (the fake tracks no active collectors). [close] marks the store closed so later calls
- * throw [IllegalStateException] — except [snapshot], which stays callable — but does not cancel
- * [scope].
+ * values never go stale on their own, so `maxAge` is inert); [stream] fetches once, on a miss, for
+ * any fetch-capable strategy — the network-priority strategies' force-refetch and cache-bypass are
+ * one-shot-read behaviors (get/fresh/getAll), not modeled in streams — then mirrors cache changes,
+ * without auto-revalidating on invalidation and reporting every [DataState.Content] as
+ * [Origin.MEMORY]; [revalidateActive]/[revalidateOn] are no-ops (the fake tracks no active
+ * collectors). Because the fake runs one-shot fetches in the caller's coroutine (only
+ * [prefetch]/[prefetchAll] use [scope]), [close] marks the store closed so later calls throw
+ * [IllegalStateException] — except [snapshot], which stays callable — but cannot cancel in-flight
+ * fetches or end active [stream] collectors; test the real store for lifecycle cancellation.
  */
 @Suppress("TooManyFunctions")
 public class FakeAquifer<K : Any, V : Any> internal constructor(
@@ -189,8 +192,12 @@ public class FakeAquifer<K : Any, V : Any> internal constructor(
         return flow {
             checkOpen()
             val cached = cache.value[key]
-            if (initialFetch(freshness, cached != null)) {
-                emit(DataState.Loading(cached))
+            // A stream fetches once, on a miss, for any fetch-capable strategy — so it never
+            // surfaces a stale cached value in Loading/Failure. The network-priority strategies'
+            // force-refetch and cache-bypass are one-shot-read behaviors (get/fresh/getAll), not
+            // modeled here; a stream over an already-cached key just projects it.
+            if (freshness != Freshness.CacheOnly && cached == null) {
+                emit(DataState.Loading())
                 try {
                     doFetch(key)
                 } catch (cancellation: CancellationException) {
