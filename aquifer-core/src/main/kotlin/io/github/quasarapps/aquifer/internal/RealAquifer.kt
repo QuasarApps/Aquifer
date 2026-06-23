@@ -143,8 +143,11 @@ internal class RealAquifer<K : Any, V : Any>(
      * is reported via [AquiferEvents.onFetchSuppressed].
      */
     private fun suppression(key: K): NegativeEntry? {
-        val entry = activeSuppression(key) ?: return null
-        notify { onFetchSuppressed(key, entry.error, (entry.suppressUntilMillis - clock.nowMillis()).milliseconds) }
+        // One clock read shared with the deadline check: since activeSuppression returns non-null
+        // only when now < suppressUntilMillis, the reported remaining is always positive.
+        val now = clock.nowMillis()
+        val entry = activeSuppression(key, now) ?: return null
+        notify { onFetchSuppressed(key, entry.error, (entry.suppressUntilMillis - now).milliseconds) }
         return entry
     }
 
@@ -152,14 +155,15 @@ internal class RealAquifer<K : Any, V : Any>(
      * The live suppression for [key] **without** the [AquiferEvents.onFetchSuppressed] side
      * effect — the pure predicate behind [suppression]. Used where reporting here would
      * double-fire (streamMany's pre-batch gate, which leaves the single report to each key's
-     * stream [prime]).
+     * stream [prime]). [now] defaults to a fresh read; [suppression] passes its own so the
+     * reported remaining is computed against the same instant the deadline is checked against.
      */
-    private fun activeSuppression(key: K): NegativeEntry? {
+    private fun activeSuppression(key: K, now: Long = clock.nowMillis()): NegativeEntry? {
         if (negativeCache == null) return null
         val entry = negative[key] ?: return null
         // Expired: fetching is allowed again, but the record stays — the streak resets only
         // on success or mutation, never by the mere passage of time.
-        return if (clock.nowMillis() >= entry.suppressUntilMillis) null else entry
+        return if (now >= entry.suppressUntilMillis) null else entry
     }
 
     /** Serves [fallback] (stale-if-error without re-fetching) or rethrows the remembered

@@ -31,9 +31,10 @@ import kotlin.time.Duration
  * is an affirmative empty state, exactly as in a real cache-only stream (handy for
  * previewing empty layouts), and [Aquifer.streamMany] combines those per-key streams into one
  * map; [Aquifer.put]/[Aquifer.invalidate] update the seeded map and are reflected live in
- * active streams (interactive previews); [Aquifer.get]/[Aquifer.getAll] and [Aquifer.fresh]
- * return seeded values (or throw [CacheMissException]); [Aquifer.prefetch]/[Aquifer.prefetchAll],
- * revalidation hooks, and [Aquifer.close] are no-ops. Not suitable for production use.
+ * active streams (interactive previews); [Aquifer.get] and [Aquifer.fresh] return a seeded
+ * value or throw [CacheMissException], while [Aquifer.getAll] returns the seeded subset (never
+ * throwing, as the real `getAll` does); [Aquifer.prefetch]/[Aquifer.prefetchAll], revalidation
+ * hooks, and [Aquifer.close] are no-ops. Not suitable for production use.
  */
 public fun <K : Any, V : Any> previewAquifer(vararg entries: Pair<K, V>): Aquifer<K, V> =
     PreviewAquifer(entries.toMap())
