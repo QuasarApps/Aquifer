@@ -29,8 +29,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.launch
@@ -38,6 +40,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration
@@ -294,6 +297,33 @@ internal class RealAquifer<K : Any, V : Any>(
         }
     }
 
+    override fun streamMany(keys: Set<K>, freshness: Freshness): Flow<Map<K, DataState<V>>> {
+        checkOpen()
+        if (keys.isEmpty()) return flowOf(emptyMap())
+        val ordered = keys.toList()
+        return flow {
+            checkOpen()
+            // Batch the initial fetches: register one shared batchFetcher call for the keys that
+            // need fetching *before* the per-key streams subscribe, so each stream joins the
+            // in-flight fetch instead of firing its own single-key call — the reactive twin of
+            // getAll's batching. With no batch fetcher this still single-flight-dedups; the
+            // streams just fetch individually. A coalescing window would batch them anyway, but
+            // this makes streamMany batch even without one (and dispatches immediately, like
+            // getAll), matching getAll's promise.
+            try {
+                startBatch(keysNeedingFetch(keys, freshness))
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (@Suppress("TooGenericExceptionCaught") ignored: Throwable) {
+                // A pre-batch cache read threw: degrade to per-key fetching — each member stream
+                // still does its own load and fetch below, and surfaces the error for real.
+            }
+            combine(ordered.map { key -> stream(key, freshness) }) { states ->
+                buildMap(ordered.size) { ordered.forEachIndexed { index, key -> put(key, states[index]) } }
+            }.collect { emit(it) }
+        }
+    }
+
     override suspend fun get(key: K, freshness: Freshness, maxAge: Duration?): V {
         checkOpen()
         requireValidMaxAge(maxAge)
@@ -363,6 +393,24 @@ internal class RealAquifer<K : Any, V : Any>(
         }
     }
 
+    override fun prefetchAll(keys: Set<K>, freshness: Freshness) {
+        checkOpen()
+        if (keys.isEmpty() || freshness == Freshness.CacheOnly) return // CacheOnly never fetches
+        // Fire-and-forget like prefetch, but collapsed into one backend call like getAll: decide
+        // which keys actually want a fetch (freshness + the negative-cache gate), then dispatch
+        // them as one batch. The fetches run and commit in the store scope; we never await them,
+        // and per-key failures surface through AquiferEvents — never thrown to the caller.
+        scope.launch {
+            try {
+                startBatch(keysNeedingFetch(keys, freshness))
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (@Suppress("TooGenericExceptionCaught") ignored: Throwable) {
+                // Best-effort: a failing cache read must not escape the scope and crash the host.
+            }
+        }
+    }
+
     override suspend fun getAll(keys: Set<K>, freshness: Freshness): Map<K, V> {
         checkOpen()
         if (keys.isEmpty()) return emptyMap()
@@ -388,33 +436,31 @@ internal class RealAquifer<K : Any, V : Any>(
     }
 
     /**
+     * Decides, per key, whether it needs a network fetch under [freshness] — using get's exact
+     * primitives ([wantsFetch] plus the negative-cache [fetchBlock] gate) — and returns the set
+     * that does, in iteration order of [keys]. Shared by the fire-and-forget batch entry points
+     * ([prefetchAll], [streamMany]'s pre-trigger); [getAll] keeps its own pass because it also
+     * captures the cached values for stale-if-error fallback in the same read.
+     */
+    private suspend fun keysNeedingFetch(keys: Set<K>, freshness: Freshness): Set<K> {
+        val toFetch = LinkedHashSet<K>()
+        for (key in keys) {
+            val entry = if (freshness == Freshness.NetworkOnly) null else load(key)?.entry
+            val needsValue = entry == null || isExpired(key, entry.writtenAtMillis)
+            val wantsFetch = wantsFetch(freshness, needsValue)
+            if (wantsFetch && fetchBlock(key, wantsFetch, freshness) == null) toFetch += key
+        }
+        return toFetch
+    }
+
+    /**
      * Fetches [keys] through one [batchFetcher] call (or independent single fetches when none
-     * is configured), reusing the per-key single-flight machinery via [refreshWith]. Keys
-     * already in flight as single fetches are joined, not re-requested. Returns only the keys
-     * that resolved; a key the batch omits, or whose fetch throws, is absent (its error has
-     * already surfaced through [AquiferEvents]).
+     * is configured), reusing the per-key single-flight machinery via [startBatch], then awaits
+     * each. Returns only the keys that resolved; a key the batch omits, or whose fetch throws,
+     * is absent (its error has already surfaced through [AquiferEvents]).
      */
     private suspend fun batchRefresh(keys: Set<K>): Map<K, V> {
-        if (keys.isEmpty()) return emptyMap()
-        val batch = batchFetcher
-        val deferreds = LinkedHashMap<K, Deferred<V>>()
-        if (batch == null) {
-            for (key in keys) deferreds[key] = refresh(key)
-        } else {
-            // A CompletableDeferred (not a lazy async, whose await() would start it on the
-            // first slice) so the one call dispatches strictly after every slice is registered
-            // in `inFlight` — robust even on a multi-threaded dispatcher.
-            val batchResult = CompletableDeferred<Map<K, V>>()
-            val started = LinkedHashSet<K>()
-            for (key in keys) {
-                deferreds[key] = refreshWith(key, onStarted = { started += key }) { _, _ ->
-                    FetchResult.Fresh(batchResult.await()[key] ?: throw BatchKeyMissingException(key))
-                }
-            }
-            // Request exactly the keys whose slice we started; a key that joined an existing
-            // single fetch awaits that one, not batchResult, so it must not be in the call.
-            if (started.isNotEmpty()) dispatchBatch(started, batch, batchResult)
-        }
+        val deferreds = startBatch(keys)
         return buildMap(deferreds.size) {
             for ((key, deferred) in deferreds) {
                 try {
@@ -434,24 +480,96 @@ internal class RealAquifer<K : Any, V : Any>(
     }
 
     /**
+     * Registers a single-flight fetch for each of [keys] and dispatches the one shared
+     * [batchFetcher] call (or independent single fetches when none is configured), **without
+     * awaiting** — returning the per-key [Deferred]s. [getAll] (via [batchRefresh]) awaits them
+     * for its result map; the fire-and-forget callers ([prefetchAll], [streamMany]'s pre-trigger)
+     * ignore them — the fetches still run, commit, and broadcast in the store scope, and a
+     * per-key failure is reported through [AquiferEvents] and held in its (un-awaited) deferred.
+     * Keys already in flight as single fetches are joined, not re-requested.
+     */
+    private fun startBatch(keys: Set<K>): Map<K, Deferred<V>> {
+        if (keys.isEmpty()) return emptyMap()
+        val batch = batchFetcher
+        val deferreds = LinkedHashMap<K, Deferred<V>>()
+        if (batch == null) {
+            for (key in keys) deferreds[key] = refresh(key)
+        } else {
+            // A CompletableDeferred (not a lazy async, whose await() would start it on the
+            // first slice) so the one call dispatches strictly after every slice is registered
+            // in `inFlight` — robust even on a multi-threaded dispatcher.
+            val batchResult = CompletableDeferred<Map<K, V>>()
+            // Published by the shared retry loop; each slice reads it so a terminal per-key
+            // failure reports the batch's true attempt count through onFetchFailed.
+            val batchAttempts = AtomicInteger(1)
+            val started = LinkedHashSet<K>()
+            for (key in keys) {
+                deferreds[key] = refreshWith(key, onStarted = { started += key }) { _, setAttempts ->
+                    val result = try {
+                        batchResult.await()
+                    } finally {
+                        // Resolved or threw, surface how many attempts the batch took.
+                        setAttempts(batchAttempts.get())
+                    }
+                    FetchResult.Fresh(result[key] ?: throw BatchKeyMissingException(key))
+                }
+            }
+            // Request exactly the keys whose slice we started; a key that joined an existing
+            // single fetch awaits that one, not batchResult, so it must not be in the call.
+            if (started.isNotEmpty()) dispatchBatch(started, batch, batchResult, batchAttempts)
+        }
+        return deferreds
+    }
+
+    /**
      * Runs the one shared batch call for [keys] and fans its outcome into [batchResult], which
      * every per-key slice awaits. A failure completes [batchResult] exceptionally so each slice
-     * reports it through [failFetch]. The call is *not* wrapped in the retry policy in this
-     * release (see [getAll]); whole-batch retry is the next step (RFC #29).
+     * reports it through [failFetch].
      */
     private fun dispatchBatch(
         keys: Set<K>,
         batch: suspend (Set<K>) -> Map<K, V>,
         batchResult: CompletableDeferred<Map<K, V>>,
+        attempts: AtomicInteger,
     ) {
         scope.launch {
             try {
-                batchResult.complete(batch(keys))
+                batchResult.complete(fetchBatchWithRetry(keys, batch, attempts))
             } catch (cancellation: CancellationException) {
                 batchResult.cancel(cancellation)
                 throw cancellation
             } catch (@Suppress("TooGenericExceptionCaught") failure: Throwable) {
                 batchResult.completeExceptionally(failure)
+            }
+        }
+    }
+
+    /**
+     * Runs the shared whole-batch call for [keys] under the store [retry] policy. A retryable
+     * transport failure backs off and re-runs the **entire** batch (retry-all): a partial map's
+     * omitted keys are definitive misses — [BatchKeyMissingException], not transient errors — so
+     * there is no failed slice to re-request, and an omission never triggers a retry. Each retry
+     * fires [AquiferEvents.onFetchRetried] for every key in the batch, mirroring the single-key
+     * path, and publishes the running attempt count through [attempts] so a terminal failure's
+     * [AquiferEvents.onFetchFailed] reports it per key. Cancellation is never retried.
+     */
+    private suspend fun fetchBatchWithRetry(
+        keys: Set<K>,
+        batch: suspend (Set<K>) -> Map<K, V>,
+        attempts: AtomicInteger,
+    ): Map<K, V> {
+        var attempt = 1
+        while (true) {
+            try {
+                return batch(keys)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (@Suppress("TooGenericExceptionCaught") failure: Throwable) {
+                val nextDelay = retry.delayAfter(attempt, failure) ?: throw failure
+                for (key in keys) notify { onFetchRetried(key, attempt, failure, nextDelay) }
+                attempt++
+                attempts.set(attempt)
+                delay(nextDelay)
             }
         }
     }

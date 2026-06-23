@@ -211,4 +211,141 @@ class PrefetchTest {
 
         assertFailsWith<IllegalStateException> { store.prefetch("k") }
     }
+
+    @Test
+    fun `prefetchAll warms missing keys in one batch call`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher { keys ->
+                batches += keys
+                keys.associateWith { it.length }
+            }
+        }
+
+        store.prefetchAll(setOf("a", "bb")) // returns immediately
+        settle() // let the fire-and-forget batch land
+        assertEquals(listOf(setOf("a", "bb")), batches, "one call for both keys")
+
+        // The warmed values are served from cache — no further fetch.
+        assertEquals(mapOf("a" to 1, "bb" to 2), store.getAll(setOf("a", "bb")))
+        assertEquals(listOf(setOf("a", "bb")), batches)
+    }
+
+    @Test
+    fun `prefetchAll skips fresh keys and batches only the rest`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            freshness { timeToLive = 10.minutes }
+            batchFetcher { keys ->
+                batches += keys
+                keys.associateWith { it.length }
+            }
+        }
+        store.put("a", 100) // fresh
+
+        store.prefetchAll(setOf("a", "bb"))
+        settle()
+        assertEquals(listOf(setOf("bb")), batches, "the fresh key is not batched")
+    }
+
+    @Test
+    fun `prefetchAll with CacheOnly never fetches`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher { keys ->
+                batches += keys
+                keys.associateWith { it.length }
+            }
+        }
+
+        store.prefetchAll(setOf("a", "bb"), Freshness.CacheOnly)
+        settle()
+        assertEquals(emptyList(), batches)
+    }
+
+    @Test
+    fun `prefetchAll stands down for negative-cached keys`() = runTest {
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher {
+                calls++
+                error("boom")
+            }
+            negativeCache { timeToLive = 30.seconds }
+        }
+        // Record a failure for "a" via a single get (a batch of one).
+        assertFailsWith<IllegalStateException> { store.get("a") }
+        assertEquals(1, calls)
+
+        // "a" is suppressed; only the un-suppressed "b" is dispatched.
+        store.prefetchAll(setOf("a", "b"))
+        settle()
+        assertEquals(2, calls, "the suppressed key stood down; only \"b\" was fetched")
+    }
+
+    @Test
+    fun `prefetchAll failures are not thrown and surface through events`() = runTest {
+        val failures = mutableListOf<String>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher { throw IllegalStateException("boom") }
+            events(object : AquiferEvents<String> {
+                override fun onFetchFailed(key: String, error: Throwable, attempts: Int) {
+                    failures += key
+                }
+            })
+        }
+
+        store.prefetchAll(setOf("a", "b")) // must not throw
+        settle()
+        assertEquals(setOf("a", "b"), failures.toSet())
+    }
+
+    @Test
+    fun `prefetchAll without a batch fetcher warms keys individually`() = runTest {
+        val fetched = mutableListOf<String>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            fetcher { key ->
+                fetched += key
+                key.length
+            }
+        }
+
+        store.prefetchAll(setOf("a", "bb"))
+        settle()
+        assertEquals(setOf("a", "bb"), fetched.toSet())
+        assertEquals(mapOf("a" to 1, "bb" to 2), store.getAll(setOf("a", "bb")))
+    }
+
+    @Test
+    fun `prefetchAll on an empty key set is a no-op`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher { keys ->
+                batches += keys
+                keys.associateWith { it.length }
+            }
+        }
+
+        store.prefetchAll(emptySet())
+        settle()
+        assertEquals(emptyList(), batches)
+    }
+
+    @Test
+    fun `prefetchAll on a closed store throws`() = runTest {
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher { keys -> keys.associateWith { it.length } }
+        }
+        store.close()
+
+        assertFailsWith<IllegalStateException> { store.prefetchAll(setOf("a")) }
+    }
 }
