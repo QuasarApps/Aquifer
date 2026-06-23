@@ -118,8 +118,11 @@ public class FakeAquiferBuilder<K : Any, V : Any> internal constructor() {
  * one-shot-read behaviors (get/fresh/getAll), not modeled in streams — then mirrors cache changes,
  * without auto-revalidating on invalidation and reporting every [DataState.Content] as
  * [Origin.MEMORY]; [revalidateActive]/[revalidateOn] are no-ops (the fake tracks no active
- * collectors). Because the fake runs one-shot fetches in the caller's coroutine (only
- * [prefetch]/[prefetchAll] use [scope]), [close] marks the store closed so later calls throw
+ * collectors). There is also no single-flight de-duplication: each read fetches independently, so
+ * two *concurrent* loads of the same missing key each run (and each increment [fetchCount]), where
+ * the real store collapses them into one — assert fetch counts on sequential calls, or against the
+ * real store for single-flight. Because the fake runs one-shot fetches in the caller's coroutine
+ * (only [prefetch]/[prefetchAll] use [scope]), [close] marks the store closed so later calls throw
  * [IllegalStateException] — except [snapshot], which stays callable — but cannot cancel in-flight
  * fetches or end active [stream] collectors; test the real store for lifecycle cancellation.
  */
@@ -146,7 +149,11 @@ public class FakeAquifer<K : Any, V : Any> internal constructor(
 
     // --- assertions -------------------------------------------------------------------------
 
-    /** Total number of fetches across all keys (each [returns]/[failsWith]/fetcher call counts). */
+    /**
+     * Total number of fetches across all keys (each scripted [returns]/[failsWith]/fetcher call
+     * counts). Note there's no single-flight de-duplication — concurrent loads of the same key
+     * each count; see the class docs.
+     */
     public fun fetchCount(): Int = synchronized(lock) { fetchLog.size }
 
     /** Number of times [key] has been fetched. */

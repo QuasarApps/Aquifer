@@ -15,6 +15,10 @@ import kotlinx.coroutines.yield
  * settle()
  * assertEquals(1, store.fetchCount("ada"))
  * ```
+ *
+ * It only yields — it does **not** advance the test's virtual clock. If the background work is
+ * gated on a delay (e.g. a `prefetch` of a key scripted with a fetch delay), advance time with
+ * `advanceUntilIdle()`/`advanceTimeBy(...)` instead of (or in addition to) `settle()`.
  */
 public suspend fun settle() {
     repeat(SETTLE_YIELDS) { yield() }

@@ -16,8 +16,8 @@ versions may contain breaking changes.
     can be re-scripted at runtime (fail once, then succeed). It honours `Freshness` over a no-TTL
     cache, fetches in `get`/`getAll`/`fresh` and on `prefetch`/`prefetchAll` (on the supplied
     scope), and streams emit `Loading`/`Content`/`Failure`/`Empty`. Deterministic by design:
-    no time-to-live, streams report `Origin.MEMORY`, and `revalidateActive`/`revalidateOn` are
-    no-ops.
+    no time-to-live, no single-flight de-duplication (concurrent loads of a key each count),
+    streams report `Origin.MEMORY`, and `revalidateActive`/`revalidateOn` are no-ops.
   - `FakeClock`: a manually advanced `WallClock` for driving staleness in tests of the real store.
   - `settle()`: suspends long enough for fire-and-forget background work to run under `runTest`.
 
