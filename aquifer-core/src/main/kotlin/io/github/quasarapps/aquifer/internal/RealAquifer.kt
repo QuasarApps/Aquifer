@@ -440,11 +440,11 @@ internal class RealAquifer<K : Any, V : Any>(
         val cached = LinkedHashMap<K, V>()
         val toFetch = LinkedHashSet<K>()
         for (key in keys) {
+            // Reads every non-NetworkOnly key — unlike keysNeedingFetch — because it also needs
+            // the cached value for stale-if-error fallback, not just the fetch decision.
             val entry = if (freshness == Freshness.NetworkOnly) null else load(key)?.entry
             if (entry != null) cached[key] = entry.value
-            val needsValue = entry == null || isExpired(key, entry.writtenAtMillis)
-            val wantsFetch = wantsFetch(freshness, needsValue)
-            if (wantsFetch && fetchBlock(key, wantsFetch, freshness) == null) toFetch += key
+            if (shouldFetch(key, freshness, entry, report = true)) toFetch += key
         }
         val fetched = batchRefresh(toFetch)
         // Prefer the freshly-fetched value, fall back to the cached one (stale-if-error); a
@@ -455,15 +455,28 @@ internal class RealAquifer<K : Any, V : Any>(
     }
 
     /**
-     * Decides, per key, whether it needs a network fetch under [freshness] — mirroring
-     * [prefetch]'s decision exactly: only the staleness-aware strategies read the cache; the
-     * always-fetch ones ([Freshness.NetworkFirst]/[Freshness.NetworkOnly]) skip the I/O, so a
-     * read failure swallowed by [prefetchAll]'s best-effort catch can never turn an always-fetch
-     * warmup into a silent no-op (and the wasted I/O is avoided). Then [wantsFetch] plus the
-     * negative-cache [fetchBlock] gate. Returns the keys that need a fetch, in iteration order
-     * of [keys]. Shared by the fire-and-forget batch entry points ([prefetchAll],
-     * [streamMany]'s pre-trigger); [getAll] keeps its own pass because it also captures the
-     * cached values for stale-if-error fallback in the same read.
+     * The single fetch decision for the batch read paths: whether [key] should hit the network
+     * under [freshness] given its already-loaded [entry] (or `null` when nothing usable is
+     * cached, or the caller skipped the read for an always-fetch strategy) — [wantsFetch]
+     * composed with the negative-cache [fetchBlock] gate ([report] forwards to it). [getAll] and
+     * [keysNeedingFetch] both route their decision through here so there is one source of truth;
+     * they differ only in cache-read policy, which each owns.
+     */
+    private fun shouldFetch(key: K, freshness: Freshness, entry: MemoryCache.Entry<V>?, report: Boolean): Boolean {
+        val needsValue = entry == null || isExpired(key, entry.writtenAtMillis)
+        val wantsFetch = wantsFetch(freshness, needsValue)
+        return wantsFetch && fetchBlock(key, wantsFetch, freshness, report) == null
+    }
+
+    /**
+     * The keys among [keys] that need a network fetch under [freshness], in iteration order.
+     * Mirrors [prefetch]'s cache-read policy: only the staleness-aware strategies read the
+     * cache; the always-fetch ones ([Freshness.NetworkFirst]/[Freshness.NetworkOnly]) skip the
+     * I/O, so a read failure swallowed by [prefetchAll]'s best-effort catch can never turn an
+     * always-fetch warmup into a silent no-op (and the wasted I/O is avoided). The decision
+     * itself is [shouldFetch]. Shared by the fire-and-forget batch entry points ([prefetchAll],
+     * [streamMany]'s pre-trigger); [getAll] keeps its own read because it also captures the
+     * cached values for stale-if-error fallback.
      *
      * [reportSuppression] controls whether a suppressed key fires
      * [AquiferEvents.onFetchSuppressed] here: [prefetchAll] reports (it has no per-key stream),
@@ -473,15 +486,11 @@ internal class RealAquifer<K : Any, V : Any>(
     private suspend fun keysNeedingFetch(keys: Set<K>, freshness: Freshness, reportSuppression: Boolean): Set<K> {
         val toFetch = LinkedHashSet<K>()
         for (key in keys) {
-            val needsValue = when (freshness) {
-                Freshness.CacheFirst, Freshness.StaleWhileRevalidate ->
-                    load(key)?.entry?.let { isExpired(key, it.writtenAtMillis) } ?: true
-                else -> true
+            val entry = when (freshness) {
+                Freshness.CacheFirst, Freshness.StaleWhileRevalidate -> load(key)?.entry
+                else -> null
             }
-            val wantsFetch = wantsFetch(freshness, needsValue)
-            if (wantsFetch && fetchBlock(key, wantsFetch, freshness, report = reportSuppression) == null) {
-                toFetch += key
-            }
+            if (shouldFetch(key, freshness, entry, report = reportSuppression)) toFetch += key
         }
         return toFetch
     }
