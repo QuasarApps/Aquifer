@@ -279,10 +279,11 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
 
     /**
      * Closes the store: cancels in-flight fetches and stops update delivery. Streams stop
-     * receiving emissions, subsequent calls to other members throw [IllegalStateException],
-     * and callers already awaiting a fetch get an [AquiferException] (never a bare
-     * cancellation of their own coroutine). Cancelling the scope passed to
-     * [AquiferBuilder.scope] has the same effect. Closing an already-closed store is a no-op.
+     * receiving emissions, subsequent calls to other members throw [IllegalStateException]
+     * (except [snapshot], a read-only memory peek that stays callable), and callers already
+     * awaiting a fetch get an [AquiferException] (never a bare cancellation of their own
+     * coroutine). Cancelling the scope passed to [AquiferBuilder.scope] has the same effect.
+     * Closing an already-closed store is a no-op.
      */
     override fun close()
 }
