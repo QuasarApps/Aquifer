@@ -105,6 +105,10 @@ private class PreviewAquifer<K : Any, V : Any>(seed: Map<K, V>) : Aquifer<K, V> 
         snapshots.update { it - key }
     }
 
+    override suspend fun invalidateWhere(predicate: (K) -> Boolean) {
+        snapshots.update { current -> current.filterKeys { !predicate(it) } }
+    }
+
     override suspend fun invalidateAll() {
         snapshots.value = emptyMap()
     }

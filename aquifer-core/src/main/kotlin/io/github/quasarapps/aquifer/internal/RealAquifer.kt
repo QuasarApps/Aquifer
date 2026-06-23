@@ -49,7 +49,7 @@ import kotlin.time.Duration.Companion.milliseconds
 // The engine is deliberately one cohesive class — single-flight, fencing, and the update bus
 // are one interlocking mechanism — and its internal constructor is fed by the builder, so
 // splitting either to satisfy the thresholds would hurt navigability without adding safety.
-@Suppress("TooManyFunctions", "LongParameterList")
+@Suppress("TooManyFunctions", "LongParameterList", "LargeClass")
 internal class RealAquifer<K : Any, V : Any>(
     private val fetcher: suspend (key: K, validator: String?) -> FetchResult<V>,
     /** Whether [fetcher] consults validators; plain stores skip the pre-fetch entry read. */
@@ -697,6 +697,40 @@ internal class RealAquifer<K : Any, V : Any>(
             sequencer.incrementAndGet()
         }
         events.emit(Event.Invalidated(key, sequence))
+    }
+
+    override suspend fun invalidateWhere(predicate: (K) -> Boolean) {
+        checkOpen()
+        // Candidate keys = everything this process currently tracks: resident memory entries,
+        // active streams, in-flight fetches, and negative-cache and write-epoch records. A
+        // SourceOfTruth can't enumerate its keys, so a persisted-only key this process never
+        // touched is out of reach (use invalidateAll for that). The predicate runs here, never
+        // under commitGuard, so user code can't stall or re-enter the store while it's locked.
+        val matched = buildSet {
+            addAll(memory.keys())
+            addAll(activeKeys.keys)
+            addAll(inFlight.keys)
+            addAll(negative.keys)
+            addAll(keyEpochs.keys)
+        }.filter(predicate)
+        if (matched.isEmpty()) return
+        // One fenced commit for the batch, mirroring invalidate per key: delete persistence,
+        // fence off any in-flight fetch, clear the negative record, drop memory. Sequences
+        // increase in iteration order; the per-key Invalidated broadcasts happen outside the
+        // lock (like invalidate) so a slow collector can't stall the commit.
+        val drops = ArrayList<Pair<K, Long>>(matched.size)
+        commitGuard.withLock {
+            for (key in matched) {
+                persistence?.delete(key)
+                fence(key)
+                negative.remove(key)
+                memory.remove(key)
+                drops += key to sequencer.incrementAndGet()
+            }
+        }
+        for ((key, sequence) in drops) {
+            events.emit(Event.Invalidated(key, sequence))
+        }
     }
 
     override suspend fun invalidateAll() {

@@ -30,6 +30,9 @@ internal class MemoryCache<K : Any, V : Any>(private val maxEntries: Int) {
 
     suspend fun get(key: K): Entry<V>? = mutex.withLock { entries[key] }
 
+    /** Snapshot of the resident keys; iterating the key set does not count as LRU use. */
+    suspend fun keys(): Set<K> = mutex.withLock { entries.keys.toSet() }
+
     suspend fun put(key: K, entry: Entry<V>): Unit = mutex.withLock { entries[key] = entry }
 
     suspend fun remove(key: K): Unit = mutex.withLock<Unit> { entries.remove(key) }
