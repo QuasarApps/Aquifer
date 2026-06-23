@@ -661,8 +661,10 @@ internal class RealAquifer<K : Any, V : Any>(
         val now = clock.nowMillis()
         val committed = LinkedHashMap<K, MemoryCache.Entry<V>>(entries.size)
         commitGuard.withLock {
-            // Persist everything first, like put: a storage failure propagates before any entry
-            // becomes visible — no memory commit and no broadcast, nothing partially applied.
+            // Persist everything first, like put: if a write throws it propagates before any
+            // in-memory commit or broadcast, so the *visible* state (memory + Updated events) is
+            // all-or-nothing. Persistence itself is per-key, not transactional, so a mid-batch
+            // failure can still leave an earlier prefix on disk (it resurfaces on the next load()).
             persistence?.let { store ->
                 for ((key, value) in entries) store.write(key, PersistedEntry(value, now))
             }

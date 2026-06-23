@@ -97,6 +97,7 @@ private class PreviewAquifer<K : Any, V : Any>(seed: Map<K, V>) : Aquifer<K, V> 
     }
 
     override suspend fun putAll(entries: Map<K, V>) {
+        if (entries.isEmpty()) return // no-op, matching Aquifer.putAll's contract
         snapshots.update { it + entries }
     }
 

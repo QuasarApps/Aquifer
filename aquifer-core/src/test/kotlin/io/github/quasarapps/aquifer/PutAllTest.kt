@@ -4,6 +4,7 @@ import app.cash.turbine.test
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -78,6 +79,35 @@ class PutAllTest {
 
         assertEquals(1, disk.read("a")?.value)
         assertEquals(2, disk.read("bb")?.value)
+    }
+
+    @Test
+    fun `putAll whose persistence write fails commits nothing to memory and emits nothing`() = runTest {
+        // Persist-all-first: this store throws on the second key. The first key is already on disk
+        // (the documented non-transactional prefix), but the in-memory commit + broadcast loop
+        // must not run at all, so the visible state (memory + Updated events) stays untouched.
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            persistence(object : SourceOfTruth<String, Int> {
+                override suspend fun read(key: String): PersistedEntry<Int>? = null
+                override suspend fun write(key: String, entry: PersistedEntry<Int>) {
+                    if (key == "b") throw IOException("disk full")
+                }
+
+                override suspend fun delete(key: String) = Unit
+                override suspend fun deleteAll() = Unit
+            })
+            fetcher { 0 }
+        }
+        store.put("a", 1)
+
+        store.stream("a", Freshness.CacheOnly).test {
+            assertEquals(DataState.Content(1, Origin.MEMORY, isStale = false), awaitItem())
+            assertFailsWith<IOException> { store.putAll(mapOf("a" to 100, "b" to 200)) }
+            // The write threw on "b" before any memory commit, so "a" is never overwritten or
+            // re-broadcast: the stream keeps its original value and sees nothing new.
+            expectNoEvents()
+        }
     }
 
     @Test
