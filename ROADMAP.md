@@ -29,7 +29,7 @@ Everything else compounds once there's a public artifact.
   newer-API slip or 11-incompatible bytecode could ship undetected. A cheap matrix turns two
   stated-but-unverified compatibility claims into tested guarantees before the first artifact
   reaches users on older toolchains and before the 1.0 bytecode contract locks. *(S)*
-- [ ] **Fence fetches at registration (correctness fix, in review — #42)** — `refreshWith`
+- [x] **Fence fetches at registration (correctness fix, shipped — #42)** — `refreshWith`
   captured the fetch's epoch in the lazily-started body, which runs *after* `inFlight.putIfAbsent`;
   a `put`/`invalidate` in that gap bumped the epoch but the fetch then read the *post-bump* epoch,
   so its commit passed the epoch check and overwrote the just-written local value — a silent loss
