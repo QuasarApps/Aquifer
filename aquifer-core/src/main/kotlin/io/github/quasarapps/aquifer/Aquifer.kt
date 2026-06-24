@@ -258,12 +258,14 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * give you, for hit-rate dashboards and cache tuning. Like [snapshot] it never suspends, never
      * touches persistence, and is safe to call anytime, including on a closed store.
      *
-     * A **hit** is a caller read ([get], [getAll] per key, or a [stream]'s initial emission) served
-     * from a cached value without awaiting a fetch; a **miss** is such a read with no usable cached
-     * value (so it goes to the network — [Freshness.NetworkFirst]/[Freshness.NetworkOnly] reads are
-     * always misses — or, for [Freshness.CacheOnly], finds nothing). Background revalidation and
-     * [prefetch]/[prefetchAll] warmups are not counted, nor are a stream's later re-fetches; see
-     * [CacheStats].
+     * A **hit** is a caller read ([get], [getAll] per key, or a [stream]'s initial emission)
+     * satisfied from cache under its requested [Freshness] without awaiting a fetch — a *fresh*
+     * entry for [Freshness.CacheFirst], a present one for [Freshness.CacheOnly]/
+     * [Freshness.StaleWhileRevalidate] (which serve stale and revalidate in the background). A
+     * **miss** is any other read: the policy needed a fetch (no usable cached value, or a
+     * network-first strategy — [Freshness.NetworkFirst]/[Freshness.NetworkOnly] always miss), or
+     * [Freshness.CacheOnly] found nothing. Background revalidation and [prefetch]/[prefetchAll]
+     * warmups are not counted, nor are a stream's later re-fetches; see [CacheStats].
      */
     public fun stats(): CacheStats
 

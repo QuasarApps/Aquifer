@@ -4,9 +4,12 @@ package io.github.quasarapps.aquifer
  * A point-in-time snapshot of a store's cache counters — the aggregate numbers [AquiferEvents]
  * can't give you. Obtained from [Aquifer.stats]; see there for precisely what is counted.
  *
- * @property hits caller reads served from the cache without awaiting a fetch.
- * @property misses caller reads with no usable cached value, which went to the network (or, for
- *   [Freshness.CacheOnly], found nothing).
+ * @property hits caller reads satisfied from cache under the requested [Freshness] without awaiting
+ *   a fetch — a *fresh* entry for [Freshness.CacheFirst], a present one for
+ *   [Freshness.CacheOnly]/[Freshness.StaleWhileRevalidate].
+ * @property misses caller reads not so satisfied: the policy needed a fetch (no usable cached value,
+ *   or a network-first strategy), or [Freshness.CacheOnly] found nothing. A suppressed fetch served
+ *   from a stale fallback still counts as a miss when the entry wasn't usable for the policy.
  * @property evictions entries dropped from the in-memory cache by LRU since the store opened.
  * @property inFlight size of the single-flight fetch registry at the instant the snapshot was
  *   taken — a gauge, not a total. Counts *joinable* in-flight fetches; a fetch fenced off by

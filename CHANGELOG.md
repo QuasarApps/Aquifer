@@ -14,9 +14,10 @@ versions may contain breaking changes.
   `hitRate` — the aggregate numbers `AquiferEvents` can't give you, for hit-rate dashboards and
   cache tuning. Like `snapshot()` it never suspends, never touches persistence, and is safe to
   call on a closed store. A hit is a caller read (`get`/`getAll` per key, or a `stream`'s initial
-  emission) served from cache without awaiting a fetch; a miss is one that went to the network
-  (`NetworkFirst`/`NetworkOnly` always miss) or, for `CacheOnly`, found nothing — background
-  revalidation and `prefetch`/`prefetchAll` warmups aren't counted. The preview and fake stores
+  emission) satisfied from cache under its requested `Freshness` without awaiting a fetch; a miss
+  is any other read — the policy needed a fetch (`NetworkFirst`/`NetworkOnly` always miss) or, for
+  `CacheOnly`, found nothing — background revalidation and `prefetch`/`prefetchAll` warmups aren't
+  counted. The preview and fake stores
   report `CacheStats.EMPTY`.
 
 ### Added — aquifer-test module

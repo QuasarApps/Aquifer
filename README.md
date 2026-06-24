@@ -350,9 +350,10 @@ val s = users.stats()
 debugOverlay.show("hit rate ${(s.hitRate * 100).toInt()}%  in-flight ${s.inFlight}  evicted ${s.evictions}")
 ```
 
-A hit is a read served from cache without a fetch; a miss is one with no usable cached value —
-it goes to the network, or for `CacheOnly` finds nothing (`NetworkFirst`/`NetworkOnly` reads always
-count as misses). Background revalidation and prefetch warmups aren't counted.
+A hit is a read satisfied from cache under its requested `Freshness` without awaiting a fetch (a
+*fresh* entry for `CacheFirst`, a present one for `CacheOnly`/`StaleWhileRevalidate`); a miss is any
+other read — the policy needed a fetch, or `CacheOnly` found nothing (`NetworkFirst`/`NetworkOnly`
+always miss). Background revalidation and prefetch warmups aren't counted.
 
 ## Testing your repositories
 
