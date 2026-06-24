@@ -117,8 +117,13 @@ Meet apps where their storage already is.
   multiplatform. *(M)*
 - [ ] **Encryption hook** — a pluggable encrypt/decrypt seam on the file store (Tink-ready)
   for caching sensitive data. *(M)*
-- [ ] **Schema-migration helper** — versioned envelopes plus a `migrate(fromVersion, json)`
-  callback, so breaking model changes stop meaning "wipe the cache directory". *(M)*
+- [x] **Schema-migration helper** — shipped on `JsonFileSourceOfTruth` as `schemaVersion` +
+  `migrate(fromVersion, value)`: writes are stamped with the current version, and an entry read
+  back at a lower version is passed to the callback to rewrite its stored JSON to the current
+  shape (lazily on read; rewritten in the new format on the next write). Returning `null` drops
+  the entry — as does one stored above the current version (an app downgrade) — so breaking
+  model changes stop meaning "wipe the cache directory". A version-0 store (the default) writes
+  no version field: byte-for-byte the previous on-disk format. *(M)*
 
 ## 0.5 — Proof-grade quality & observability
 

@@ -7,6 +7,20 @@ versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added — schema migration (JsonFileSourceOfTruth)
+
+- `JsonFileSourceOfTruth` gains `schemaVersion: Int = 0` and
+  `migrate: (fromVersion: Int, value: JsonElement) -> JsonElement?` (also on the
+  `jsonFileSourceOfTruth(...)` factory). A breaking model change — a removed or retyped field —
+  no longer means wiping the cache directory: stamp writes with a `schemaVersion` and supply a
+  `migrate` that rewrites an older entry's stored JSON to the current shape. Migration runs
+  lazily on read (the entry is rewritten in the new format the next time it is written) and only
+  for entries stored *below* the current version, which it receives so one callback can step
+  across several. Returning `null` drops the entry (healed away, then refetched), as does an
+  entry stored *above* the current version (an app downgrade), and a migrated tree that still
+  fails to decode. A version-0 store (the default) writes no version field and migrates nothing
+  — byte-for-byte the previous on-disk format, so existing caches and call sites are unaffected.
+
 ### Added — stats (cache counters)
 
 - `Aquifer.stats(): CacheStats`: a non-suspending snapshot of per-store cache counters — `hits`,

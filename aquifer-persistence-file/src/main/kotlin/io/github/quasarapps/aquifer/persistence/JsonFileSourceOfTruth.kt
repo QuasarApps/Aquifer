@@ -11,6 +11,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.serializer
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -63,8 +64,9 @@ import kotlin.io.path.readText
  *   file so the slot heals on the next write. A read that fails with a (possibly transient)
  *   I/O error is also reported as absent, but the file is kept — it may read fine next time.
  *   Schema evolution is tolerated by default: [DEFAULT_JSON] ignores unknown keys, so adding
- *   fields to your model doesn't invalidate existing cache files (removing non-optional
- *   fields does — bump the directory name when making breaking model changes).
+ *   fields to your model doesn't invalidate existing cache files. Removing or retyping a
+ *   non-optional field is a breaking change — supply [schemaVersion] and [migrate] to upgrade
+ *   old entries in place (see *Schema migration* below) instead of wiping the cache directory.
  *
  * ### Bounded operation
  *
@@ -83,6 +85,43 @@ import kotlin.io.path.readText
  * is the directory's only live writer; the dedicated-directory requirement above already
  * implies that.
  *
+ * ### Schema migration
+ *
+ * By default a value whose stored JSON no longer matches [V] — a removed or retyped field —
+ * is undecodable, so [read] heals the slot and the entry refetches. To upgrade old entries in
+ * place instead, stamp writes with a [schemaVersion] and supply a [migrate] that rewrites an
+ * older value's JSON to the current shape:
+ *
+ * ```
+ * JsonFileSourceOfTruth(
+ *     directory = dir,
+ *     valueSerializer = User.serializer(),   // v2: { id, firstName, lastName }
+ *     schemaVersion = 2,
+ *     migrate = { fromVersion, value ->
+ *         when (fromVersion) {
+ *             // v0/v1 stored a single "name"; split it into first/last.
+ *             0, 1 -> buildJsonObject {
+ *                 val obj = value.jsonObject
+ *                 put("id", obj.getValue("id"))
+ *                 val parts = obj.getValue("name").jsonPrimitive.content.split(" ", limit = 2)
+ *                 put("firstName", parts.first())
+ *                 put("lastName", parts.getOrElse(1) { "" })
+ *             }
+ *             else -> null   // older version this build no longer understands: drop it
+ *         }
+ *     },
+ * )
+ * ```
+ *
+ * Migration runs lazily on [read] — the entry is rewritten in the new format the next time it
+ * is written — and is called only for entries stored *below* the current [schemaVersion],
+ * receiving that stored version so one callback can fan out across several. Returning `null`
+ * drops the entry (healed away, then refetched), as does an entry stored *above*
+ * [schemaVersion] (an app downgrade, whose shape this build can't know). A migrated tree that
+ * still fails to decode is treated as corrupt and healed. A version-0 store (the default)
+ * writes no version field and migrates nothing — byte-for-byte the pre-migration on-disk
+ * format.
+ *
  * ### Concurrency
  *
  * Safe for concurrent use from multiple coroutines: concurrent writes to a key resolve to one
@@ -99,26 +138,39 @@ import kotlin.io.path.readText
  *   `null` (the default) means unbounded. Must be positive.
  * @param maxBytes optional cap on the total size of the stored files in bytes, enforced by
  *   LRU eviction. `null` (the default) means unbounded. Must be positive.
+ * @param schemaVersion version stamped into every written entry. An entry read back at a lower
+ *   version is passed to [migrate]; at a higher version it is dropped. `0` (the default) writes
+ *   no version field, preserving the pre-migration on-disk format. Must be non-negative.
+ * @param migrate upgrades an older entry's value JSON to the current [schemaVersion] shape,
+ *   given the stored `fromVersion` and the raw value tree; returns the current-shape tree, or
+ *   `null` to drop the entry (it refetches). Called only when `fromVersion < schemaVersion`.
  */
 // Cohesive store (each helper is one locked or lock-free step of an I/O path) configured by
 // defaulted knobs — a config object for two optional caps would be ceremony.
 @Suppress("TooManyFunctions", "LongParameterList")
 public class JsonFileSourceOfTruth<K : Any, V : Any>(
     private val directory: Path,
-    valueSerializer: KSerializer<V>,
+    private val valueSerializer: KSerializer<V>,
     private val keyEncoder: (K) -> String = { it.toString() },
     private val json: Json = DEFAULT_JSON,
     private val ioContext: CoroutineContext = Dispatchers.IO,
     private val maxEntries: Int? = null,
     private val maxBytes: Long? = null,
+    private val schemaVersion: Int = 0,
+    private val migrate: (fromVersion: Int, value: JsonElement) -> JsonElement? = { _, _ -> null },
 ) : SourceOfTruth<K, V> {
 
     init {
         require(maxEntries == null || maxEntries > 0) { "maxEntries must be positive, was $maxEntries" }
         require(maxBytes == null || maxBytes > 0) { "maxBytes must be positive, was $maxBytes" }
+        require(schemaVersion >= 0) { "schemaVersion must be non-negative, was $schemaVersion" }
     }
 
     private val storedSerializer = Stored.serializer(valueSerializer)
+
+    // Reads decode the value as a raw JSON tree first, so an entry written under an older
+    // schemaVersion can be migrated before it is bound to the current [valueSerializer].
+    private val rawSerializer = Stored.serializer(JsonElement.serializer())
     private val bounded = maxEntries != null || maxBytes != null
 
     /** Guards [index], [totalBytes], one-time housekeeping, and (when [bounded]) renames. */
@@ -142,8 +194,10 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
             // Recency is bumped when the read observes the file, not after the decode, so a
             // slow read can't lose its place to an eviction pass racing it.
             recordAccess(file)
-            val stored = json.decodeFromString(storedSerializer, file.readText())
-            PersistedEntry(stored.value, stored.writtenAtMillis, stored.validator)
+            val stored = json.decodeFromString(rawSerializer, file.readText())
+            val element = currentShapeOf(stored.schemaVersion, stored.value) ?: return@withContext heal(file)
+            val value = json.decodeFromJsonElement(valueSerializer, element)
+            PersistedEntry(value, stored.writtenAtMillis, stored.validator)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: SerializationException) {
@@ -161,8 +215,10 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
     override suspend fun write(key: K, entry: PersistedEntry<V>): Unit = withContext(ioContext) {
         ensureHousekeeping()
         directory.createDirectories()
-        val encoded =
-            json.encodeToString(storedSerializer, Stored(entry.writtenAtMillis, entry.value, entry.validator))
+        val encoded = json.encodeToString(
+            storedSerializer,
+            Stored(entry.writtenAtMillis, entry.value, entry.validator, schemaVersion),
+        )
         val bytes = encoded.encodeToByteArray()
         val target = fileFor(key)
         val temp = directory.resolve("${target.fileName}.${UUID.randomUUID()}$TEMP_SUFFIX")
@@ -356,6 +412,17 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
         return null
     }
 
+    /**
+     * Maps a stored value tree to the current [schemaVersion] shape, or `null` if the entry
+     * can't be brought to it and should be dropped (healed away, then refetched): a [migrate]
+     * that declines an older version, or a version newer than this build can read.
+     */
+    private fun currentShapeOf(storedVersion: Int, value: JsonElement): JsonElement? = when {
+        storedVersion == schemaVersion -> value
+        storedVersion < schemaVersion -> migrate(storedVersion, value)
+        else -> null
+    }
+
     private fun fileFor(key: K): Path {
         val digest = MessageDigest.getInstance("SHA-256").digest(keyEncoder(key).encodeToByteArray())
         val name = digest.joinToString("") { byte -> "%02x".format(byte.toInt() and BYTE_MASK) }
@@ -369,6 +436,9 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
         val value: V,
         // Defaulted for forward compatibility: pre-validator cache files decode as null.
         val validator: String? = null,
+        // Defaulted so pre-migration cache files decode as version 0; with encodeDefaults off
+        // a version-0 store writes no version field, so opting out is byte-for-byte the old format.
+        val schemaVersion: Int = 0,
     )
 
     public companion object {
@@ -392,12 +462,15 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
  * }
  * ```
  */
+@Suppress("LongParameterList") // defaulted knobs; a config object for optional params would be ceremony
 public inline fun <K : Any, reified V : Any> jsonFileSourceOfTruth(
     directory: Path,
     json: Json = JsonFileSourceOfTruth.DEFAULT_JSON,
     noinline keyEncoder: (K) -> String = { it.toString() },
     maxEntries: Int? = null,
     maxBytes: Long? = null,
+    schemaVersion: Int = 0,
+    noinline migrate: (fromVersion: Int, value: JsonElement) -> JsonElement? = { _, _ -> null },
 ): SourceOfTruth<K, V> = JsonFileSourceOfTruth(
     directory = directory,
     valueSerializer = json.serializersModule.serializer(),
@@ -405,4 +478,6 @@ public inline fun <K : Any, reified V : Any> jsonFileSourceOfTruth(
     json = json,
     maxEntries = maxEntries,
     maxBytes = maxBytes,
+    schemaVersion = schemaVersion,
+    migrate = migrate,
 )

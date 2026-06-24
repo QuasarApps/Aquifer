@@ -237,6 +237,34 @@ least-recently-used eviction, and temp files orphaned by a crash are cleaned up 
 use. Or implement `SourceOfTruth` yourself to back Aquifer with Room, SQLDelight, or
 DataStore — it's four suspend functions.
 
+Adding a field to your model is safe by default (unknown keys are ignored). For a *breaking*
+change — a removed or retyped field — stamp writes with a `schemaVersion` and supply a
+`migrate` so old cache files upgrade in place instead of being wiped:
+
+```kotlin
+jsonFileSourceOfTruth<UserId, User>(             // User v2: { id, firstName, lastName }
+    directory = dir,
+    schemaVersion = 2,
+    migrate = { fromVersion, value ->            // value is the stored JSON tree
+        when (fromVersion) {
+            0, 1 -> buildJsonObject {            // v0/v1 stored a single "name"
+                val obj = value.jsonObject
+                put("id", obj.getValue("id"))
+                val parts = obj.getValue("name").jsonPrimitive.content.split(" ", limit = 2)
+                put("firstName", parts.first())
+                put("lastName", parts.getOrElse(1) { "" })
+            }
+            else -> null                         // unknown older version: drop and refetch
+        }
+    },
+)
+```
+
+Migration runs lazily on read (the entry is rewritten in the new format the next time it's
+written) and only for entries below the current `schemaVersion`. Returning `null` drops the
+entry — as does one stored at a *higher* version (an app downgrade). A version-0 store (the
+default) writes no version field, so opting in is byte-for-byte the old on-disk format.
+
 ### Retries with backoff and jitter
 
 Fetches are not retried by default. Opt in per store:
