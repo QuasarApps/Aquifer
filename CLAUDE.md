@@ -35,7 +35,7 @@ Owns review quality. Never writes code, never merges.
 
 ## Working in this repo
 
-Aquifer is a Kotlin multiplatform caching library. Build, test, static-analysis, API, and release mechanics live in `CONTRIBUTING.md` — read it; the rules below are the few high-blast-radius gates an agent must not get wrong.
+Aquifer is an offline-first, stale-while-revalidate caching data layer for Kotlin and Android (Kotlin/JVM + Android modules at `JvmTarget.JVM_11` — not Kotlin Multiplatform). Build, test, static-analysis, API, and release mechanics live in `CONTRIBUTING.md` — read it; the rules below are the few high-blast-radius gates an agent must not get wrong.
 
 - Run `./gradlew build` before pushing: it compiles, tests, runs detekt + ktlint, and verifies the locked public API in one shot. CI must be green (build, tests, `apiCheck`).
 - After an **intentional** public API change, regenerate with `./gradlew apiDump` and commit the updated `*/api/*.api` files (one per module) in the **same** PR — otherwise `apiCheck` fails the build.
