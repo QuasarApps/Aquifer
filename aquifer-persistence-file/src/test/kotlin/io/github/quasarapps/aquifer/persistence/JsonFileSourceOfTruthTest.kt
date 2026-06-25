@@ -5,14 +5,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.io.path.exists
+import kotlin.io.path.extension
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -20,6 +27,18 @@ import kotlin.test.assertTrue
 
 @Serializable
 private data class User(val id: String, val name: String, val age: Int)
+
+/** A String serializer that fails to encode one sentinel value, to force a mid-batch staging failure. */
+private object FailToEncode : KSerializer<String> {
+    const val POISON: String = "boom"
+    override val descriptor = PrimitiveSerialDescriptor("FailToEncode", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: String) {
+        check(value != POISON) { "refusing to encode the poison value" }
+        encoder.encodeString(value)
+    }
+
+    override fun deserialize(decoder: Decoder): String = decoder.decodeString()
+}
 
 class JsonFileSourceOfTruthTest {
 
@@ -135,7 +154,7 @@ class JsonFileSourceOfTruthTest {
     }
 
     @Test
-    fun `writeAll on a bounded store evicts down to the cap in a single pass`() = runTest {
+    fun `writeAll on a bounded store evicts down to the entry cap`() = runTest {
         val store = JsonFileSourceOfTruth<String, User>(dir.resolve("users"), User.serializer(), maxEntries = 2)
 
         // Staged in iteration order, so "a" is the eldest and the only one over the cap of 2.
@@ -151,6 +170,29 @@ class JsonFileSourceOfTruthTest {
         assertEquals("B", store.read("b")?.value?.name)
         assertEquals("C", store.read("c")?.value?.name)
         assertEquals(2, dir.resolve("users").listDirectoryEntries().size)
+    }
+
+    @Test
+    fun `writeAll that fails to stage an entry commits nothing and leaves no temp files`() = runTest {
+        val store = JsonFileSourceOfTruth<String, String>(dir.resolve("users"), FailToEncode)
+
+        // "b" fails to encode, so stage() throws after "a" is already written to a fsynced temp.
+        assertFailsWith<IllegalStateException> {
+            store.writeAll(
+                linkedMapOf(
+                    "a" to PersistedEntry("ok", 1),
+                    "b" to PersistedEntry(FailToEncode.POISON, 2),
+                    "c" to PersistedEntry("ok-too", 3),
+                ),
+            )
+        }
+
+        val entries = dir.resolve("users").listDirectoryEntries()
+        assertTrue(entries.none { it.extension == "json" }, "a mid-batch staging failure commits nothing")
+        assertTrue(
+            entries.none { it.fileName.toString().endsWith(".tmp") },
+            "the already-staged temp for \"a\" is cleaned up, not orphaned",
+        )
     }
 
     @Test

@@ -14,7 +14,8 @@ versions may contain breaking changes.
   engine now routes `putAll` through `writeAll` and `invalidateWhere` through `deleteMany`, so a
   store that overrides them does the batch in a single round-trip instead of N.
   `JsonFileSourceOfTruth` overrides both: `writeAll` stages every entry to a fsynced temp file
-  first and then commits all the renames under one lock with a single LRU eviction pass, and
+  first and then commits all the renames under one lock acquisition (recording and evicting per
+  committed entry, so the on-disk and byte-budget outcome matches the per-key path), and
   `deleteMany` deletes the whole set under one lock acquisition. First of the two bulk SPI
   capabilities the queryable persistence adapters need (a `readAll` read-side counterpart follows).
 

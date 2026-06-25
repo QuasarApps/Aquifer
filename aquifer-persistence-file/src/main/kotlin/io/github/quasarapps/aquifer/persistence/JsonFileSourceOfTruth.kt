@@ -269,19 +269,22 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
         directory.createDirectories()
         // Stage every entry to a fsynced temp file first — the expensive, lock-free I/O — then
         // commit all the renames together. A staging failure leaves nothing in place; when
-        // [bounded], one lock acquisition and a single eviction pass cover the whole batch
-        // instead of N. A commit-phase failure can still leave an earlier prefix in place,
-        // matching the non-transactional contract of the default loop.
+        // [bounded], one lock acquisition covers the whole batch instead of N. A commit-phase
+        // failure can still leave an earlier prefix in place, matching the non-transactional
+        // contract of the default loop.
         val staged = ArrayList<Staged>(entries.size)
         try {
             for ((key, entry) in entries) staged += stage(key, entry)
             if (bounded) {
                 housekeeping.withLock {
+                    // record + evict per committed entry, exactly as write() does, so the surviving
+                    // set and byte total match the per-key loop even when the batch replaces an
+                    // already-indexed key (a single deferred pass could keep a different victim).
                     for (item in staged) {
                         moveIntoPlace(item.temp, item.target)
                         record(item.target, item.size)
+                        evictWhileOverBudget()
                     }
-                    evictWhileOverBudget()
                 }
             } else {
                 for (item in staged) moveIntoPlace(item.temp, item.target)
