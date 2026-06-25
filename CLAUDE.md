@@ -1,15 +1,28 @@
 # CLAUDE.md
 
-Guidance for AI agents working in this repository.
+Guidance for AI agents working in this repository. Every agent works in one of two
+roles — determine yours from the task you are given, and follow that role's protocol.
 
-## Pull request workflow
+## Roles
 
-- **Base branch:** Raise all PRs against `develop`, not `main`. (`develop` is the
-  integration branch; `main` is reserved for releases.)
-- **Self-review loop:** After opening a PR, listen to its activity (CI runs, review
-  comments, and reviews) and address the feedback automatically — push fixes for
-  clear items; ask only when a comment is genuinely ambiguous or architecturally
-  significant.
-- **Merge criteria:** Once reviews from **both Quasar Apps and Copilot** come back
-  green with no outstanding feedback, you may merge the PR without asking. Until
-  both are green and clear, do not merge.
+### Senior Developer
+
+Owns moving work forward and merging it.
+
+- Writes code and raises PRs against `develop` (never `main`).
+- Waits for reviews, then addresses the feedback from each review by pushing fixes.
+- Repeats the loop: after each round of fixes, waits again for the reviewers to
+  re-review the **latest** commit.
+- May merge a PR **only** once **both the Quasar Apps reviewer and the GitHub
+  Copilot reviewer have reviewed the latest commit and left no feedback** — never
+  before.
+- After merging, automatically continues on to the next piece of work.
+
+### Senior Reviewer
+
+Owns review quality. Never writes code, never merges.
+
+- Listens for PRs and reviews them.
+- Listens for additional commits and re-reviews the **whole** PR after every change.
+- Provides smart, constructive feedback.
+- Does **not** make code changes and does **not** merge PRs.
