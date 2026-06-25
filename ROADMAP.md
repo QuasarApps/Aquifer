@@ -25,11 +25,12 @@ Everything else compounds once there's a public artifact.
   PRs and Dependabot target it by default, keeping `main` protected. The earlier Dependabot
   toolchain bumps (#7–#11, #19, #20) and the #44/#45 follow-ups are all resolved.
 - [ ] **Maven Central badge + install snippet verification** after the first release. *(S)*
-- [x] **JDK 11/17/21 CI matrix** (shipped — #46) — CI ran only Temurin 21, but every module compiles to
-  JVM-11 bytecode and CONTRIBUTING promises JDK-17 builds; neither is actually tested, so a
-  newer-API slip or 11-incompatible bytecode could ship undetected. A cheap matrix turns two
-  stated-but-unverified compatibility claims into tested guarantees before the first artifact
-  reaches users on older toolchains and before the 1.0 bytecode contract locks. *(S)*
+- [x] **JDK 11/17/21 CI matrix** (shipped — #46) — CI ran only Temurin 21, but every
+  module compiles to JVM-11 bytecode and CONTRIBUTING promises JDK-17 builds; neither is
+  actually tested, so a newer-API slip or 11-incompatible bytecode could ship undetected. A
+  cheap matrix turns two stated-but-unverified compatibility claims into tested guarantees
+  before the first artifact reaches users on older toolchains and before the 1.0 bytecode
+  contract locks. *(S)*
 - [x] **Fence fetches at registration (correctness fix, shipped — #42)** — `refreshWith`
   captured the fetch's epoch in the lazily-started body, which runs *after* `inFlight.putIfAbsent`;
   a `put`/`invalidate` in that gap bumped the epoch but the fetch then read the *post-bump* epoch,
