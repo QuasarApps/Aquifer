@@ -153,43 +153,92 @@ class BulkSourceOfTruthTest {
         assertEquals(mapOf("a" to 1, "b" to 2), store.getAll(setOf("a", "b"), Freshness.CacheFirst))
     }
 
+    /**
+     * A store whose [SourceOfTruth.readAll] snapshots the requested values, then suspends on
+     * [release] before returning them — so a test can land a mutation *during* a batched read and
+     * verify loadAll's fence against the pre-mutation snapshot it then sees.
+     */
+    private fun gatedReadAllDisk(
+        release: CompletableDeferred<Unit>,
+        seed: Map<String, PersistedEntry<Int>>,
+    ): SourceOfTruth<String, Int> = object : SourceOfTruth<String, Int> {
+        val storage = LinkedHashMap(seed)
+        override suspend fun read(key: String) = storage[key]
+        override suspend fun write(key: String, entry: PersistedEntry<Int>) {
+            storage[key] = entry
+        }
+
+        override suspend fun delete(key: String) {
+            storage.remove(key)
+        }
+
+        override suspend fun deleteAll() = storage.clear()
+
+        override suspend fun readAll(keys: Collection<String>): Map<String, PersistedEntry<Int>> {
+            val snapshot = keys.mapNotNull { key -> storage[key]?.let { key to it } }.toMap()
+            release.await()
+            return snapshot // the *pre-mutation* values, the exact race loadAll fences against
+        }
+    }
+
     @Test
     fun `a batched read fenced by a concurrent invalidate does not resurrect the deleted entry`() = runTest {
         val release = CompletableDeferred<Unit>()
-        val disk = object : SourceOfTruth<String, Int> {
-            val storage = linkedMapOf("k" to PersistedEntry(1, writtenAtMillis = 0))
-            override suspend fun read(key: String) = storage[key]
-            override suspend fun write(key: String, entry: PersistedEntry<Int>) {
-                storage[key] = entry
-            }
-
-            override suspend fun delete(key: String) {
-                storage.remove(key)
-            }
-
-            override suspend fun deleteAll() = storage.clear()
-
-            override suspend fun readAll(keys: Collection<String>): Map<String, PersistedEntry<Int>> {
-                // Snapshot before the gate, so the value returned is the *pre-invalidate* one — the
-                // exact race load()/loadAll fence against: a read in flight across an invalidate.
-                val snapshot = keys.mapNotNull { key -> storage[key]?.let { key to it } }.toMap()
-                release.await()
-                return snapshot
-            }
-        }
         val store = aquifer<String, Int> {
             scope(backgroundScope)
-            persistence(disk)
+            persistence(gatedReadAllDisk(release, mapOf("k" to PersistedEntry(1, writtenAtMillis = 0))))
             fetcher { error("CacheOnly never fetches") }
             freshness { timeToLive = Duration.INFINITE }
         }
 
         val reading = async { store.getAll(setOf("k"), Freshness.CacheOnly) }
         settle() // getAll is suspended inside readAll, having already snapshotted "k"
-        store.invalidate("k") // bumps the epoch and deletes "k" from disk
+        store.invalidate("k") // bumps the key epoch and deletes "k" from disk
         release.complete(Unit)
 
         assertEquals(emptyMap(), reading.await()) // fenced: the stale disk read is dropped, not served
         assertFalse("k" in store.snapshot(), "the deleted entry was not hydrated back into memory")
+    }
+
+    @Test
+    fun `a batched read fenced by a concurrent invalidateAll does not resurrect the deleted entry`() = runTest {
+        // The globalEpoch half of the fence (invalidateAll/logout), distinct from invalidate's
+        // per-key epoch bump above — both halves must hold, exactly as the single-key suite checks.
+        val release = CompletableDeferred<Unit>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            persistence(gatedReadAllDisk(release, mapOf("k" to PersistedEntry(1, writtenAtMillis = 0))))
+            fetcher { error("CacheOnly never fetches") }
+            freshness { timeToLive = Duration.INFINITE }
+        }
+
+        val reading = async { store.getAll(setOf("k"), Freshness.CacheOnly) }
+        settle() // suspended inside readAll, having snapshotted "k"
+        store.invalidateAll() // bumps globalEpoch and clears every key epoch + the disk
+        release.complete(Unit)
+
+        assertEquals(emptyMap(), reading.await())
+        assertFalse("k" in store.snapshot())
+    }
+
+    @Test
+    fun `a put racing a batched read wins over the stale disk snapshot`() = runTest {
+        // loadAll's under-lock memory re-read: a put that lands during the batched read must not be
+        // clobbered by the older disk snapshot the read then returns.
+        val release = CompletableDeferred<Unit>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            persistence(gatedReadAllDisk(release, mapOf("k" to PersistedEntry(1, writtenAtMillis = 0))))
+            fetcher { error("served from cache after the put") }
+            freshness { timeToLive = Duration.INFINITE }
+        }
+
+        val reading = async { store.getAll(setOf("k"), Freshness.CacheFirst) }
+        settle() // suspended inside readAll, having snapshotted the stale "k" = 1
+        store.put("k", 2) // fresher value lands in memory while the disk read is in flight
+        release.complete(Unit)
+
+        assertEquals(mapOf("k" to 2), reading.await()) // the put wins, not the stale disk 1
+        assertEquals(2, store.get("k", Freshness.CacheOnly)) // and memory holds the put value
     }
 }

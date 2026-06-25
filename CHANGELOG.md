@@ -20,7 +20,8 @@ versions may contain breaking changes.
   `writeAll` stages every entry to a fsynced temp file first and then commits all the renames under
   one lock acquisition (recording and evicting per committed entry, so the on-disk and byte-budget
   outcome matches the per-key path); and `deleteMany` deletes the whole set under one lock
-  acquisition. The two bulk SPI capabilities the queryable persistence adapters need.
+  acquisition. Together with #53's write/delete batching, these complete the two bulk SPI
+  capabilities the queryable persistence adapters need.
 
 ### Added — encryption at rest (JsonFileSourceOfTruth)
 
