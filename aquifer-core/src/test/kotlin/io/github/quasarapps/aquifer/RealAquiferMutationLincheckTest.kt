@@ -29,9 +29,9 @@ import kotlin.test.Test
  * It does **not** cover the epoch-fencing guarantee. With no fetch and no persistence, no executed
  * path reads the epoch, so a fence/epoch regression (e.g. deleting a `fence()` call) is invisible
  * here — only a fetch commit writes memory without moving the epoch, and the fetch transport is on
- * the injected scope, outside Lincheck's control. Fencing (#42) and residual hydration (#13/#20)
- * stay in the hand-written interleaving tests, plus the extracted `EpochFence`/`SingleFlightRegistry`
- * Lincheck models planned as the follow-up (ROADMAP 0.5).
+ * the injected scope, outside Lincheck's control. Fencing (#42) and residual hydration (issue #13's
+ * thread) stay in the hand-written interleaving tests, plus the extracted `EpochFence`/
+ * `SingleFlightRegistry` Lincheck models planned as the follow-up (ROADMAP 0.5).
  *
  * Tagged `lincheck` so it runs only in the dedicated `lincheckTest` task, not `check`/`build`.
  */

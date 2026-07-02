@@ -203,8 +203,8 @@ The engine's guarantees deserve machine-checked evidence.
   without moving the epoch — runs on the injected scope, outside Lincheck's control, so the fencing
   and single-flight invariants can't be checked on the engine as-is. They need the epoch/registry
   primitives *extracted* from `RealAquifer` (extraction-with-delegation, so the model stays the
-  production code) and model-checked directly — a follow-up that also carries the #13/#20 residual
-  race. *(L, in progress)*
+  production code) and model-checked directly — a follow-up that also carries the residual hydration
+  race documented on issue #13's thread. *(L, in progress)*
 - [ ] **[#13](https://github.com/QuasarApps/aquifer/issues/13) — bounded `keyEpochs`** *(deferred — needs Lincheck)* — the live-fetch refcount
   sketched in the issue is **necessary but insufficient**: it covers only the fetch capture site,
   while `load`/`loadAll`/stream-preload also capture a `(globalEpoch, 0)` snapshot on off-lock,
