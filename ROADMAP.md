@@ -8,7 +8,7 @@ tested and every trade-off written down.
 **How to read this:** milestones are sorted by importance; items within a milestone are
 sorted by leverage (impact ÷ effort). Effort: **S** ≈ a day, **M** ≈ a few days, **L** ≈ a
 week+, **XL** ≈ multiple weeks. Checked boxes are shipped. Numbers like
-[#12](https://github.com/QuasarApps/Aquifer/issues/12) are tracked issues; the primary RFC/issue
+[#12](https://github.com/QuasarApps/aquifer/issues/12) are tracked issues; the primary RFC/issue
 citations are linked explicitly for one-click navigation (most other `#N` references remain bare).
 
 ---
@@ -70,7 +70,7 @@ What every consuming app touches daily; highest user-facing leverage.
   (mirroring `streamMany`). `previewAquifer` already backs `streamMany`, so multi-key `@Preview`s
   need no extra wiring. The lighter, in-scope half of multi-key support — distinct from the deferred
   Paging bridge. *(M)*
-- [x] **`DataState.Empty` / observable deletion** — designed in RFC [#23](https://github.com/QuasarApps/Aquifer/issues/23), shipped as a new
+- [x] **`DataState.Empty` / observable deletion** — designed in RFC [#23](https://github.com/QuasarApps/aquifer/issues/23), shipped as a new
   sealed member emitted only to `CacheOnly` streams (initial miss and observed
   `invalidate`/`invalidateAll`); fetch-capable streams keep signalling through their
   refetch. Replaces the dishonest `Failure(CacheMissException)` miss emission;
@@ -104,7 +104,7 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   (a fresh entry triggers nothing), shares the single-flight fetch with concurrent
   reads, stands down under negative caching, and never throws (failures surface through
   events). *(S)*
-- [x] **Batched fetching, phase 1** (RFC [#29](https://github.com/QuasarApps/Aquifer/issues/29)) — a `batchFetcher { keys -> Map }` builder
+- [x] **Batched fetching, phase 1** (RFC [#29](https://github.com/QuasarApps/aquifer/issues/29)) — a `batchFetcher { keys -> Map }` builder
   option and `getAll(keys, freshness)` that collapses N keys into one backend call, reusing
   the per-key machinery (single-flight, fencing, negative caching, persistence, events) so
   batching is a pure transport optimization; a single `get`/`stream`/`prefetch` is a batch of
@@ -144,7 +144,7 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   #51 wired `okHttpConditionalFetcher(respectCacheControl = true)` to parse `max-age` (minus
   `Age`), `no-store`/`no-cache`/`max-age=0` → immediately stale, and `Expires` as a fallback.
   Opt-in, so *the app declares how fresh data must be* stays the default stance. *(M)*
-- [ ] **[#12](https://github.com/QuasarApps/Aquifer/issues/12) — benchmark, then stripe the commit guard** — JMH-style harness for concurrent
+- [ ] **[#12](https://github.com/QuasarApps/aquifer/issues/12) — benchmark, then stripe the commit guard** — JMH-style harness for concurrent
   commit throughput against a real file store; implement per-key lock striping only if the
   numbers justify it (constraints documented in the issue). *(M–L)*
 
@@ -198,7 +198,7 @@ The engine's guarantees deserve machine-checked evidence.
   window fixed in #42 (a latent epoch-capture race the hand-written `MutationFencingTest` missed
   for months) is exactly the kind of bug this would have caught mechanically — its successor
   windows belong in the target set. *(L)*
-- [ ] **[#13](https://github.com/QuasarApps/Aquifer/issues/13) — bounded `keyEpochs`** *(deferred — needs Lincheck)* — the live-fetch refcount
+- [ ] **[#13](https://github.com/QuasarApps/aquifer/issues/13) — bounded `keyEpochs`** *(deferred — needs Lincheck)* — the live-fetch refcount
   sketched in the issue is **necessary but insufficient**: it covers only the fetch capture site,
   while `load`/`loadAll`/stream-preload also capture a `(globalEpoch, 0)` snapshot on off-lock,
   non-fetch paths, and even the fetch capture races its own refcount increment. Any fetch-scoped
