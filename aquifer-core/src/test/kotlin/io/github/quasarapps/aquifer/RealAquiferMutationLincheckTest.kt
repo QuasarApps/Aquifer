@@ -59,8 +59,8 @@ class RealAquiferMutationLincheckTest {
     suspend fun getCacheOnly(@Param(name = "key") key: Int): Int? =
         try {
             store.get(key, Freshness.CacheOnly)
-        } catch (miss: CacheMissException) {
-            null
+        } catch (ignored: CacheMissException) {
+            null // a CacheOnly miss is a normal outcome, mapped to null for the linearizability spec
         }
 
     @Operation
