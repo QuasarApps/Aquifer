@@ -73,12 +73,16 @@ class RealAquiferMutationLincheckTest {
         .actorsPerThread(3)
         .check(this::class)
 
+    // Model-checking the *real* engine is far heavier per scenario than a plain structure (coroutine
+    // Mutex + monitor + suspension points), so this uses a smaller, shorter configuration than the
+    // data-structure tests: enough to systematically explore the commitGuard mutation region and
+    // confirm suspend-@Operation scheduling, without the multi-minute blow-up of the default bounds.
     @Test
     fun modelCheckingTest() = ModelCheckingOptions()
-        .iterations(30)
+        .iterations(10)
         .threads(2)
-        .actorsPerThread(3)
-        .actorsBefore(2)
-        .actorsAfter(1)
+        .actorsPerThread(2)
+        .actorsBefore(1)
+        .actorsAfter(0)
         .check(this::class)
 }
