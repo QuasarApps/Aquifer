@@ -23,15 +23,20 @@ import kotlin.test.Test
  *
  * This is deliberately narrow:
  * - **Canary:** it proves `suspend` `@Operation`s and a coroutine `Mutex` are schedulable under
- *   Lincheck 2.39 on the real engine — the prerequisite for the extracted fencing models to come.
+ *   Lincheck 2.39 on the real engine.
  * - **Guard:** it pins atomicity/ordering of the `commitGuard`-serialized mutation region.
  *
  * It does **not** cover the epoch-fencing guarantee. With no fetch and no persistence, no executed
  * path reads the epoch, so a fence/epoch regression (e.g. deleting a `fence()` call) is invisible
  * here — only a fetch commit writes memory without moving the epoch, and the fetch transport is on
- * the injected scope, outside Lincheck's control. Fencing (#42) and residual hydration (issue #13's
- * thread) stay in the hand-written interleaving tests, plus the extracted `EpochFence`/
- * `SingleFlightRegistry` Lincheck models planned as the follow-up (ROADMAP 0.5).
+ * the injected scope, outside Lincheck's control. The single-flight registry is now model-checked
+ * directly ([io.github.quasarapps.aquifer.internal.SingleFlightRegistryLincheckTest]). Epoch fencing
+ * (#42) itself is a **real-time (happens-before) property**, not a linearizability one — a fetch's
+ * commit must take effect as of its *start*, which linearizability never forces (it may reorder the
+ * overlapping commit after the mutation), and the regression is sequentially consistent so Lincheck,
+ * which checks against a program's own sequential behaviour, cannot flag it. Fencing (#42) and
+ * residual hydration (issue #13's thread) therefore stay in the deterministic interleaving tests
+ * (`MutationFencingTest`, `FenceDuringRegistrationTest`), which pin the real-time order Lincheck cannot.
  *
  * Tagged `lincheck` so it runs only in the dedicated `lincheckTest` task, not `check`/`build`.
  */
