@@ -192,28 +192,35 @@ N-round-trip behavior or force a contract break mid-milestone.
 
 The engine's guarantees deserve machine-checked evidence.
 
-- [ ] **Lincheck concurrency tests** — model-check the engine's invariants instead of relying on
-  hand-written interleavings; the strongest possible backing for the epoch design. *Harness + first
-  tests shipped* (Lincheck 2.39 on a JDK-21 runner, isolated in a dedicated `lincheckTest` task +
-  CI job so slow model-checking stays out of `check`/`build`): linearizability of `MemoryCache`, the
-  negative cache's `BoundedLruMap`, and the real engine's fetch-free mutation region
-  (`put`/`invalidate`/`invalidateAll`/`get(CacheOnly)` under `commitGuard`). That last one doubles
-  as the canary confirming `suspend` `@Operation`s + a coroutine `Mutex` are Lincheck-schedulable.
-  **Remaining (the flagship #42-catching part):** the fetch commit — which alone writes memory
-  without moving the epoch — runs on the injected scope, outside Lincheck's control, so the fencing
-  and single-flight invariants can't be checked on the engine as-is. They need the epoch/registry
-  primitives *extracted* from `RealAquifer` (extraction-with-delegation, so the model stays the
-  production code) and model-checked directly — a follow-up that also carries the residual hydration
-  race documented on issue #13's thread. *(L, in progress)*
-- [ ] **[#13](https://github.com/QuasarApps/aquifer/issues/13) — bounded `keyEpochs`** *(deferred — needs Lincheck)* — the live-fetch refcount
+- [x] **Lincheck concurrency tests** (data structures shipped; fencing scoped out — see below) —
+  model-check the engine's invariants instead of relying on hand-written interleavings. Lincheck 2.39
+  on a JDK-21 runner, isolated in a dedicated `lincheckTest` task + CI job so slow model-checking stays
+  out of `check`/`build`. **Shipped:** linearizability of `MemoryCache`, the negative cache's
+  `BoundedLruMap`, the real engine's fetch-free mutation region
+  (`put`/`invalidate`/`invalidateAll`/`get(CacheOnly)` under `commitGuard`, doubling as the canary that
+  `suspend` `@Operation`s + a coroutine `Mutex` are Lincheck-schedulable), and — after extracting the
+  epoch/registry primitives from `RealAquifer` (extraction-with-delegation, so the checked code *is* the
+  production code) — the `SingleFlightRegistry` fetch-dedup registry.
+  **Scoped out (the erstwhile "flagship #42" part):** epoch fencing is a **real-time (happens-before)
+  property, not a linearizability one** — a fetch's commit must take effect as of its *start* (before a
+  racing `put`), which linearizability never forces: it may reorder the overlapping commit after the
+  mutation, and the #42 regression is *sequentially* consistent, so Lincheck (which checks a program
+  against its own sequential behaviour) cannot flag it. A faithful fencing model is inherently
+  non-linearizable by construction. So fencing (#42) and the residual hydration race stay on the
+  deterministic interleaving tests (`MutationFencingTest`, `FenceDuringRegistrationTest`), which pin the
+  real-time order Lincheck cannot; the extraction still pays off by isolating the primitives and getting
+  the registry under model-checking. *(L)*
+- [ ] **[#13](https://github.com/QuasarApps/aquifer/issues/13) — bounded `keyEpochs`** *(deferred)* — the live-fetch refcount
   sketched in the issue is **necessary but insufficient**: it covers only the fetch capture site,
   while `load`/`loadAll`/stream-preload also capture a `(globalEpoch, 0)` snapshot on off-lock,
   non-fetch paths, and even the fetch capture races its own refcount increment. Any fetch-scoped
   refcount looks correct against today's (fetch-only) interleaving tests yet silently un-fences the
   hydration and stream paths — a subtly-wrong break of the crown-jewel "never resurrect deleted
   data" guarantee, which the issue rates worse than the leak. A sound eviction needs an
-  atomic-capture protocol across the hot read path, i.e. the Lincheck harness above. Deferred until
-  then. (The `invalidateWhere`-over-disk-only-keys growth vector remains too.) *(M, blocked on Lincheck)*
+  atomic-capture protocol across the hot read path; now that the epoch/registry primitives are
+  extracted (`EpochFence`), that protocol has a clear home, but it must be proven by targeted
+  interleaving tests (fencing is not linearizability-checkable — see the Lincheck item above).
+  Deferred. (The `invalidateWhere`-over-disk-only-keys growth vector remains too.) *(M)*
 - [x] **Bound the negative-cache map** (shipped) — the `negative` map had the same unbounded-growth
   lifecycle (a wide key space of one-time failures — a search/autocomplete store hitting transient
   5xx — retained a record per key until `invalidateAll`), but bounding it is **sound and independent**

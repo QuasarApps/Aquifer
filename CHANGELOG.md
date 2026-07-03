@@ -17,7 +17,8 @@ versions may contain breaking changes.
   window. Eviction is least-recently-consulted and never privileges expired records (which carry the
   consecutive-failure streak). This is the sound half of issue #13; bounding `keyEpochs` remains
   deferred — the live-fetch refcount sketch is insufficient (it misses the `load`/`loadAll`/stream
-  capture sites), so a sound eviction needs the planned Lincheck harness.
+  capture sites), so a sound eviction needs an atomic-capture protocol proven by targeted
+  interleaving tests.
 
 ### Added — multi-key Compose binding
 

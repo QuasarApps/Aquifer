@@ -84,11 +84,10 @@ internal class RealAquifer<K : Any, V : Any>(
     }
 
     private val memory = MemoryCache<K, V>(maxEntries)
-    private val inFlight = ConcurrentHashMap<K, Deferred<V>>()
     private val closed = AtomicBoolean(false)
 
     // stats() counters. Reads run on many coroutines, so these are lock-free; evictions live on
-    // MemoryCache and in-flight is the inFlight gauge, both read at snapshot time.
+    // MemoryCache and in-flight is the epochFence in-flight gauge, both read at snapshot time.
     private val hits = AtomicLong(0)
     private val misses = AtomicLong(0)
 
@@ -115,11 +114,13 @@ internal class RealAquifer<K : Any, V : Any>(
      * post-mutation refetches start genuinely new requests instead of joining the doomed one.
      *
      * All epoch bumps, memory mutations, fetch commits, and their persistence writes are
-     * serialized by [commitGuard]; cache *reads* never take it.
+     * serialized by [commitGuard]; cache *reads* never take it. The epoch clock and the
+     * single-flight registry it drives live in [epochFence]: its [EpochFence.capture]/
+     * [EpochFence.beginOrJoin] are lock-free, while its [EpochFence.fence]/[EpochFence.fenceAll]
+     * and the commit gate [EpochFence.isCurrent] are called only under [commitGuard].
      */
     private val commitGuard = Mutex()
-    private val globalEpoch = AtomicLong()
-    private val keyEpochs = ConcurrentHashMap<K, Long>()
+    private val epochFence = EpochFence<K, Deferred<V>>()
 
     /**
      * Stamps every cache commit — and every drop ([invalidate]/[invalidateAll]) — with a
@@ -238,7 +239,7 @@ internal class RealAquifer<K : Any, V : Any>(
     private suspend fun FlowCollector<DataState<V>>.collectStates(key: K, freshness: Freshness, maxAge: Duration?) {
         // Captured before hydration so prime() can tell pure LRU eviction (epoch untouched)
         // apart from invalidation when memory comes up empty.
-        val preloadEpoch = epochOf(key)
+        val preloadEpoch = epochFence.capture(key)
         // Hydrate from persistence BEFORE subscribing to the bus: storage I/O must never run
         // inside the subscription, where a subscriber that is not consuming yet would
         // backpressure every emitter in the store. prime() re-reads memory once subscribed,
@@ -680,7 +681,7 @@ internal class RealAquifer<K : Any, V : Any>(
             // Persist first so a storage failure propagates before anything becomes visible;
             // direct mutations are all-or-nothing, unlike best-effort fetch write-through.
             persistence?.write(key, PersistedEntry(value, now))
-            fence(key)
+            epochFence.fence(key)
             negative.remove(key)
             entry = MemoryCache.Entry(value, now, sequencer.incrementAndGet())
             memory.put(key, entry)
@@ -705,7 +706,7 @@ internal class RealAquifer<K : Any, V : Any>(
             // Then the in-memory commits + fences (none of which throw): fence off any in-flight
             // fetch, clear the negative-cache record, and stamp a fresh entry per key.
             for ((key, value) in entries) {
-                fence(key)
+                epochFence.fence(key)
                 negative.remove(key)
                 val entry = MemoryCache.Entry(value, now, sequencer.incrementAndGet())
                 memory.put(key, entry)
@@ -725,7 +726,7 @@ internal class RealAquifer<K : Any, V : Any>(
         // outside the lock, so collectors need the sequence to arbitrate emit races.
         val sequence = commitGuard.withLock {
             persistence?.delete(key)
-            fence(key)
+            epochFence.fence(key)
             negative.remove(key)
             memory.remove(key)
             sequencer.incrementAndGet()
@@ -742,9 +743,9 @@ internal class RealAquifer<K : Any, V : Any>(
         val inProcess = buildSet {
             addAll(memory.keys())
             addAll(activeKeys.keys)
-            addAll(inFlight.keys)
+            addAll(epochFence.inFlightKeys())
             addAll(negative.keys())
-            addAll(keyEpochs.keys)
+            addAll(epochFence.fencedKeys())
         }.filterTo(LinkedHashSet(), predicate)
         // A store that can enumerate makes the predicate disk-wide: it also reaches persisted keys
         // this process never tracked (evicted from memory and never re-touched, or never loaded
@@ -770,7 +771,7 @@ internal class RealAquifer<K : Any, V : Any>(
         commitGuard.withLock {
             persistence?.deleteMany(matched)
             for (key in matched) {
-                fence(key)
+                epochFence.fence(key)
                 negative.remove(key)
                 memory.remove(key)
                 drops += key to sequencer.incrementAndGet()
@@ -785,9 +786,7 @@ internal class RealAquifer<K : Any, V : Any>(
         checkOpen()
         val sequence = commitGuard.withLock {
             persistence?.deleteAll()
-            globalEpoch.incrementAndGet()
-            keyEpochs.clear()
-            inFlight.clear()
+            epochFence.fenceAll()
             negative.clear()
             memory.clear()
             sequencer.incrementAndGet()
@@ -800,9 +799,9 @@ internal class RealAquifer<K : Any, V : Any>(
     // memory.keys() snapshots under its own monitor, so the returned set is stable.
     override fun snapshot(): Set<K> = memory.keys()
 
-    // Non-suspending like snapshot(): lock-free counter reads + the inFlight gauge, no checkOpen.
+    // Non-suspending like snapshot(): lock-free counter reads + the in-flight gauge, no checkOpen.
     override fun stats(): CacheStats =
-        CacheStats(hits.get(), misses.get(), memory.evictions(), inFlight.size)
+        CacheStats(hits.get(), misses.get(), memory.evictions(), epochFence.inFlightSize)
 
     /** Records one caller read as a hit or a miss for [stats]; see [isCacheHit]. */
     private fun recordRead(freshness: Freshness, present: Boolean, usable: Boolean) {
@@ -821,20 +820,6 @@ internal class RealAquifer<K : Any, V : Any>(
             Freshness.CacheFirst -> usable
             Freshness.NetworkFirst, Freshness.NetworkOnly -> false
         }
-
-    /**
-     * Invalidates everything an in-flight fetch for [key] might commit: bumps the key's
-     * epoch and evicts the fetch from the registry so later refreshes start anew. The fetch
-     * itself keeps running — its awaiting callers still get a value — but its commit is
-     * discarded. Must run under [commitGuard].
-     */
-    private fun fence(key: K) {
-        keyEpochs[key] = (keyEpochs[key] ?: 0L) + 1L
-        inFlight.remove(key)
-    }
-
-    /** Epoch snapshot for [key]; commits compare snapshots taken when their fetch started. */
-    private fun epochOf(key: K): Pair<Long, Long> = globalEpoch.get() to (keyEpochs[key] ?: 0L)
 
     override suspend fun revalidateActive() {
         checkOpen()
@@ -913,13 +898,13 @@ internal class RealAquifer<K : Any, V : Any>(
         freshness: Freshness,
         maxAge: Duration?,
         preloaded: Snapshot<V>?,
-        preloadEpoch: Pair<Long, Long>,
+        preloadEpoch: Epoch,
     ) {
         // Memory only — the persistence read already happened before subscription (see
         // collectStates); doing I/O here would stall the entire bus. NetworkOnly bypasses
         // cached reads entirely.
         val inMemory = if (freshness == Freshness.NetworkOnly) null else memory.get(key)
-        val snapshot = reconcileSnapshot(preloaded, inMemory, epochUnchanged = epochOf(key) == preloadEpoch)
+        val snapshot = reconcileSnapshot(preloaded, inMemory, epochUnchanged = epochFence.isCurrent(key, preloadEpoch))
         val entry = snapshot?.entry
         if (snapshot != null) {
             emit(
@@ -936,7 +921,7 @@ internal class RealAquifer<K : Any, V : Any>(
         // A fetch that started before this collector subscribed broadcast its Fetching event
         // too early for us to see it. Note it now (before refresh, so a fetch we start
         // ourselves is not mistaken for a pre-existing one) and replay it below.
-        val joinedInFlightFetch = inFlight.containsKey(key)
+        val joinedInFlightFetch = epochFence.hasInFlight(key)
         val needsValue = entry == null ||
             isExpired(key, entry.writtenAtMillis, maxAge, entry.serverFreshForMillis?.milliseconds)
         recordRead(freshness, present = entry != null, usable = entry != null && !needsValue)
@@ -1004,48 +989,53 @@ internal class RealAquifer<K : Any, V : Any>(
         onStarted: (() -> Unit)? = null,
         transport: suspend (prior: MemoryCache.Entry<V>?, setAttempts: (Int) -> Unit) -> FetchResult<V>,
     ): Deferred<V> {
-        inFlight[key]?.let { return it }
-        // Captured here — before the fetch is registered in inFlight below — not inside the
-        // lazily-started body. The body doesn't run until pending.start(), which happens after
-        // putIfAbsent; a fence (epoch bump + inFlight eviction) landing in that gap would
-        // otherwise be read by the body as the *current* epoch, so the fetch's commit would pass
-        // its epoch check and clobber the very write that fenced it. Capturing at registration
-        // only ever fails safe: any mutation after this point leaves this epoch stale, so the
-        // commit is correctly dropped.
-        val epoch = epochOf(key)
-        val pending = scope.async(start = CoroutineStart.LAZY) {
-            var attempts = 1
-            try {
-                events.emit(Event.Fetching(key))
-                notify { onFetchStarted(key) }
-                // The validator — and the value a NotModified resolves to — come from the
-                // entry as it stood when the fetch started; a mutation during the fetch
-                // fences the commit regardless. Plain stores skip this read entirely.
-                val prior = if (conditional) load(key)?.entry else null
-                val startedAt = clock.nowMillis()
-                val result = transport(prior) { attempts = it }
-                val now = clock.nowMillis()
-                notify { onFetchSucceeded(key, (now - startedAt).milliseconds) }
-                val resolved = resolve(key, result, prior)
-                commitFetched(key, epoch, resolved, now)
-                resolved.value
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (@Suppress("TooGenericExceptionCaught") failure: Throwable) {
-                failFetch(key, epoch, failure, attempts)
-                throw failure
+        // beginOrJoin captures the fencing epoch *before* the fetch is registered — not inside the
+        // lazily-started body — and hands it to the body via [epoch]. The body doesn't run until
+        // pending.start() (after registration); a fence (epoch bump + in-flight eviction) landing
+        // in that gap would otherwise be read by the body as the *current* epoch, so the fetch's
+        // commit would pass its epoch check and clobber the very write that fenced it. Capturing at
+        // registration only ever fails safe: any mutation after this point leaves this epoch stale,
+        // so the commit is correctly dropped.
+        val registration = epochFence.beginOrJoin(key) { epoch ->
+            scope.async(start = CoroutineStart.LAZY) {
+                var attempts = 1
+                try {
+                    events.emit(Event.Fetching(key))
+                    notify { onFetchStarted(key) }
+                    // The validator — and the value a NotModified resolves to — come from the
+                    // entry as it stood when the fetch started; a mutation during the fetch
+                    // fences the commit regardless. Plain stores skip this read entirely.
+                    val prior = if (conditional) load(key)?.entry else null
+                    val startedAt = clock.nowMillis()
+                    val result = transport(prior) { attempts = it }
+                    val now = clock.nowMillis()
+                    notify { onFetchSucceeded(key, (now - startedAt).milliseconds) }
+                    val resolved = resolve(key, result, prior)
+                    commitFetched(key, epoch, resolved, now)
+                    resolved.value
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (@Suppress("TooGenericExceptionCaught") failure: Throwable) {
+                    failFetch(key, epoch, failure, attempts)
+                    throw failure
+                }
             }
         }
-        val existing = inFlight.putIfAbsent(key, pending)
-        if (existing != null) {
-            // Lost the race: another caller registered a fetch first. Join theirs.
-            pending.cancel()
-            return existing
+        return when (registration) {
+            is Registration.Joined -> {
+                // Lost the race (or joined an already-registered fetch): cancel the token we built,
+                // if any, and join the winner's.
+                registration.discarded?.cancel()
+                registration.existing
+            }
+            is Registration.Started -> {
+                val pending = registration.token
+                onStarted?.invoke()
+                pending.invokeOnCompletion { epochFence.completed(key, pending) }
+                pending.start()
+                pending
+            }
         }
-        onStarted?.invoke()
-        pending.invokeOnCompletion { inFlight.remove(key, pending) }
-        pending.start()
-        return pending
     }
 
     /**
@@ -1053,9 +1043,9 @@ internal class RealAquifer<K : Any, V : Any>(
      * the negative-cache record, writes memory and persistence, and broadcasts `Updated`. A
      * mutation that raced the fetch leaves the epoch moved, and the commit is dropped.
      */
-    private suspend fun commitFetched(key: K, epoch: Pair<Long, Long>, resolved: Resolved<V>, now: Long) {
+    private suspend fun commitFetched(key: K, epoch: Epoch, resolved: Resolved<V>, now: Long) {
         val committed: MemoryCache.Entry<V>? = commitGuard.withLock {
-            if (epochOf(key) == epoch) {
+            if (epochFence.isCurrent(key, epoch)) {
                 // Cleared with the commit it celebrates: a read between commit and a later
                 // clear could otherwise still see the stale suppression window.
                 negative.remove(key)
@@ -1075,7 +1065,7 @@ internal class RealAquifer<K : Any, V : Any>(
         }
         // Re-check before broadcasting: a mutation may have raced the gap above, and observers
         // should not see a fenced-off value even transiently.
-        if (committed != null && epochOf(key) == epoch) {
+        if (committed != null && epochFence.isCurrent(key, epoch)) {
             events.emit(
                 Event.Updated(
                     key,
@@ -1095,10 +1085,10 @@ internal class RealAquifer<K : Any, V : Any>(
      * racing put/invalidate can't have its just-cleared failure memory re-poisoned by a
      * failure that observed the pre-mutation epoch.
      */
-    private suspend fun failFetch(key: K, epoch: Pair<Long, Long>, failure: Throwable, attempts: Int) {
+    private suspend fun failFetch(key: K, epoch: Epoch, failure: Throwable, attempts: Int) {
         notify { onFetchFailed(key, failure, attempts) }
         val current = commitGuard.withLock {
-            (epochOf(key) == epoch).also { if (it) recordFailure(key, failure) }
+            epochFence.isCurrent(key, epoch).also { if (it) recordFailure(key, failure) }
         }
         if (current) {
             events.emit(Event.Failed(key, failure))
@@ -1120,14 +1110,14 @@ internal class RealAquifer<K : Any, V : Any>(
     private suspend fun load(key: K): Snapshot<V>? {
         memory.get(key)?.let { return Snapshot(it, Origin.MEMORY) }
         val store = persistence ?: return null
-        val epoch = epochOf(key)
+        val epoch = epochFence.capture(key)
         val persisted = store.read(key) ?: return null
         return commitGuard.withLock {
             val existing = memory.get(key)
             when {
                 existing != null -> Snapshot(existing, Origin.MEMORY)
 
-                epochOf(key) == epoch -> {
+                epochFence.isCurrent(key, epoch) -> {
                     val entry =
                         MemoryCache.Entry(
                             persisted.value,
@@ -1162,13 +1152,13 @@ internal class RealAquifer<K : Any, V : Any>(
             return result
         }
         // Epoch snapshot per memory-miss key, captured before the batched read like load() does.
-        val epochs = LinkedHashMap<K, Pair<Long, Long>>()
+        val epochs = LinkedHashMap<K, Epoch>()
         for (key in keys) {
             val cached = memory.get(key)
             if (cached != null) {
                 result[key] = Snapshot(cached, Origin.MEMORY)
             } else {
-                epochs[key] = epochOf(key)
+                epochs[key] = epochFence.capture(key)
             }
         }
         if (epochs.isEmpty()) return result
@@ -1181,7 +1171,7 @@ internal class RealAquifer<K : Any, V : Any>(
                 when {
                     existing != null -> result[key] = Snapshot(existing, Origin.MEMORY)
 
-                    epochOf(key) == epoch -> {
+                    epochFence.isCurrent(key, epoch) -> {
                         val hydrated =
                             MemoryCache.Entry(
                                 entry.value,
