@@ -1102,32 +1102,50 @@ internal class RealAquifer<K : Any, V : Any>(
      *
      * Hydration is epoch-fenced exactly like fetch commits: a storage read suspended across
      * an [invalidate]/[invalidateAll] must not put the deleted entry back into memory; the
-     * fenced case reports a miss. Memory is also re-checked under the lock — a commit that
-     * raced the storage read (a fetch that just returned, or a put, which also moves the
-     * epoch) is fresher than the disk snapshot by construction and must never be overwritten
-     * by it. The hot memory path never takes [commitGuard].
+     * fenced case reports a miss (those mutations move the epoch). A racing *fetch commit* does
+     * **not** move the epoch, so a second guard covers it: if the [sequencer] advanced during the
+     * off-lock read, a commit raced and its value may already have been evicted from the memory
+     * re-check, so the authoritative persisted state is re-read under [commitGuard] rather than
+     * trusting the (possibly stale) pre-lock snapshot — closing the residual hydration race that
+     * would otherwise let a stale disk snapshot overwrite a fresher-but-evicted commit. The hot
+     * memory path never takes [commitGuard], and with no racing write no extra read is done.
      */
     private suspend fun load(key: K): Snapshot<V>? {
         memory.get(key)?.let { return Snapshot(it, Origin.MEMORY) }
         val store = persistence ?: return null
         val epoch = epochFence.capture(key)
-        val persisted = store.read(key) ?: return null
+        // Captured with the epoch, before the off-lock read: a fetch commit can race the read
+        // *without* moving the epoch (only invalidate/put fence), so the epoch alone cannot tell a
+        // stale pre-lock snapshot from one a racing commit has since superseded. The sequencer
+        // advances on every commit under commitGuard, so a change between here and the lock means a
+        // write raced — see the hydrate branch.
+        val writeGen = sequencer.get()
+        val preLockRead = store.read(key) ?: return null
         return commitGuard.withLock {
             val existing = memory.get(key)
             when {
                 existing != null -> Snapshot(existing, Origin.MEMORY)
 
                 epochFence.isCurrent(key, epoch) -> {
-                    val entry =
-                        MemoryCache.Entry(
-                            persisted.value,
-                            persisted.writtenAtMillis,
-                            sequencer.incrementAndGet(),
-                            persisted.validator,
-                            persisted.serverFreshForMillis,
-                        )
-                    memory.put(key, entry)
-                    Snapshot(entry, Origin.PERSISTENCE)
+                    // Residual-hydration guard: if a commit raced the off-lock read (sequencer
+                    // moved), the pre-lock snapshot may be staler than a value that was committed to
+                    // memory and disk and then evicted before this memory re-check — so re-read the
+                    // authoritative persisted state under the lock (no commit can be in flight while
+                    // it is held). With no racing write the pre-lock read stands, so the common
+                    // cold-read path takes no extra I/O.
+                    val source = if (sequencer.get() != writeGen) store.read(key) else preLockRead
+                    source?.let {
+                        val entry =
+                            MemoryCache.Entry(
+                                it.value,
+                                it.writtenAtMillis,
+                                sequencer.incrementAndGet(),
+                                it.validator,
+                                it.serverFreshForMillis,
+                            )
+                        memory.put(key, entry)
+                        Snapshot(entry, Origin.PERSISTENCE)
+                    }
                 }
 
                 else -> null
@@ -1140,8 +1158,10 @@ internal class RealAquifer<K : Any, V : Any>(
      * [runBatch]): memory hits resolve without I/O, and every memory miss is read from the source
      * of truth in a single [SourceOfTruth.readAll] call instead of N. Each miss is fenced exactly
      * as [load] — its epoch is captured before the batched read and re-checked under [commitGuard]
-     * with a memory re-read — so a put/invalidate racing the read neither resurrects a deleted
-     * entry nor overwrites a fresher commit. Keys with nothing cached are absent from the result.
+     * with a memory re-read, and the same [sequencer]-based residual-hydration guard re-reads the
+     * batch under the lock if a commit raced it — so a put/invalidate racing the read neither
+     * resurrects a deleted entry nor overwrites a fresher commit (even one since evicted). Keys with
+     * nothing cached are absent from the result.
      */
     private suspend fun loadAll(keys: Collection<K>): Map<K, Snapshot<V>> {
         val result = LinkedHashMap<K, Snapshot<V>>(keys.size)
@@ -1162,9 +1182,16 @@ internal class RealAquifer<K : Any, V : Any>(
             }
         }
         if (epochs.isEmpty()) return result
-        val persisted = store.readAll(epochs.keys)
-        if (persisted.isEmpty()) return result
+        // See load(): the sequencer pins whether a commit raced the off-lock batch read.
+        val writeGen = sequencer.get()
+        val preLockRead = store.readAll(epochs.keys)
+        if (preLockRead.isEmpty()) return result
         commitGuard.withLock {
+            // Residual-hydration guard (see load()): on any write racing the off-lock batch read
+            // (sequencer moved) re-read the authoritative persisted state under the lock, so a
+            // committed-then-evicted value is never overwritten by a stale pre-lock snapshot; with
+            // no racing write the pre-lock batch stands.
+            val persisted = if (sequencer.get() != writeGen) store.readAll(epochs.keys) else preLockRead
             for ((key, entry) in persisted) {
                 val epoch = epochs[key] ?: continue // a store returning an unrequested key: ignore it
                 val existing = memory.get(key)

@@ -275,24 +275,26 @@ The engine's guarantees deserve machine-checked evidence.
 Small, high-frequency conveniences surfaced while building the feature set; each must keep
 the existing fencing and single-flight guarantees.
 
-- [ ] **`evictMemory()` / `trimToSize(n)`** *(deferred — blocked on the hydration-race fix below)* —
+- [ ] **`evictMemory()` / `trimToSize(n)`** *(unblocked — the hydration-race fix below has shipped)* —
   shed the in-memory tier without touching persistence (rehydrating from disk on the next read), so a
   long-lived store can answer Android's `onTrimMemory`/`onLowMemory`. Today only `invalidateAll` drops
   memory, and it wipes persistence too. The two methods themselves are simple (non-suspending, silent,
-  memory-only), but a design + adversarial-verification pass found `evictMemory` exposes the residual
-  hydration race below: clearing a just-committed **MRU** entry that a suspended `load()` relies on for
-  its under-lock memory re-check lets `load` hydrate its stale pre-lock disk snapshot over the fresher
-  commit (a narrow, self-healing stale read — it does *not* touch epoch-fenced invalidated/`put` data).
-  Cannot ship soundly until that race is closed. An optional proactive memory-TTL sweep is a separate
-  companion. *(M, blocked)*
-- [ ] **Close the `load()`/`loadAll()` residual hydration race** — `load` reads persistence *outside*
-  `commitGuard` and re-checks only memory under the lock; since fetch commits don't move the epoch, that
-  memory re-check is the sole guard against hydrating a stale snapshot over a fresher commit, and it is
-  reliable today only because LRU never evicts the MRU commit mid-window. Documented on issue #13's
-  thread; promoted here because it blocks `evictMemory`. Fix options: re-read persistence under
-  `commitGuard` in the hydrate branch (I/O-under-lock — benchmark first, see #12), or a per-key
-  last-commit-sequence trace surviving eviction (adds bounded per-key state). Best designed alongside the
-  Lincheck harness. *(M)*
+  memory-only); the design + adversarial-verification pass found they exposed the residual hydration
+  race below (dropping a just-committed **MRU** entry a suspended `load()` relied on for its under-lock
+  memory re-check), which is now closed — so this can proceed. An optional proactive memory-TTL sweep is
+  a separate companion. *(M)*
+- [x] **Close the `load()`/`loadAll()` residual hydration race** (shipped) — `load` reads persistence
+  *outside* `commitGuard` and re-checks only memory under the lock; since fetch commits don't move the
+  epoch, that memory re-check was the sole guard against hydrating a stale snapshot over a fresher
+  commit, reliable only because LRU never evicts the MRU commit mid-window (a guarantee `evictMemory`
+  would break). Closed by adding a second guard: the `sequencer` (which advances on every commit under
+  `commitGuard`) is captured before the off-lock read, and if it moved by the time the lock is held, the
+  authoritative persisted state is re-read under the lock rather than trusting the pre-lock snapshot.
+  This is the "re-read under the lock" option scoped to *only fire when a commit actually raced*: the
+  uncontended cold-read path is unchanged, so no baseline regression to benchmark; under sustained
+  concurrent commits a raced load re-reads under the commit lock (bounded — one extra read — and
+  writers already do their I/O under that lock). Mutation-verified by a deterministic one-slot-cache
+  eviction test. *(M)*
 - [ ] **Key-scoped policy resolver** — let one store apply heterogeneous TTL (and later
   retry/negative-cache) by key subtype — `freshness { timeToLiveFor = { key -> … } }` — instead
   of spinning up a separate `Aquifer` per policy (which duplicates the memory cache, scope, and

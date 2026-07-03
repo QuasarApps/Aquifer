@@ -7,6 +7,18 @@ versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed — residual hydration race
+
+- `load`/`loadAll` read persistence outside the commit lock and, under the lock, re-checked only
+  memory before hydrating. Because a fetch commit does not move the epoch, that memory re-check was
+  the only guard against a stale pre-lock disk snapshot overwriting a fresher commit — and it failed
+  if the committed entry was evicted before the read resumed (reliable until now only because LRU
+  never evicts the most-recently-used entry). A second guard now closes it: the commit sequence is
+  captured before the off-lock read and, if it advanced by the time the lock is held, the current
+  persisted state is re-read under the lock instead of trusting the pre-lock snapshot. The common
+  cold-read path is unchanged (no extra I/O unless a commit actually raced). This also unblocks a
+  future `evictMemory()`.
+
 ### Added — bounded negative cache
 
 - `negativeCache { maxEntries = … }` (default 512) LRU-bounds the failure memory, which was
