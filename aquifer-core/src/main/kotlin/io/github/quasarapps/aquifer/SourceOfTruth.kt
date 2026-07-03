@@ -12,7 +12,9 @@ package io.github.quasarapps.aquifer
  * ### Contract
  *
  * - Methods may be invoked concurrently from arbitrary threads; implementations must be safe
- *   under concurrent use. Aquifer does not lock around persistence calls.
+ *   under concurrent use and must not assume Aquifer serializes calls. Aquifer holds an internal
+ *   commit lock across writes (and, in a narrow race window, across a hydration read), but hot-path
+ *   reads run off that lock and can overlap writes, so calls can and do interleave.
  * - [read] returns `null` for unknown keys. Implementations should also return `null` (rather
  *   than throw) for entries they can no longer decode, treating them as absent.
  * - Failures thrown by [write]/[delete]/[deleteAll] propagate to direct callers
