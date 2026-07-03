@@ -11,6 +11,11 @@ updates:
       # JUnit 6+ requires JVM 17; the library's test compilations target JVM 11.
       - dependency-name: org.junit:junit-bom
         update-types: ['version-update:semver-major']
+      # Gradle 9.6.0 removed an internal API that AGP 8.x still relies on, so the
+      # wrapper cannot move past 9.5.x until the Android modules adopt AGP 9. Remove
+      # this once AGP is bumped to a version compatible with Gradle 9.6+.
+      - dependency-name: gradle-wrapper
+        versions: ['>= 9.6']
 
   - package-ecosystem: github-actions
     directory: /
