@@ -7,6 +7,33 @@ versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added — memory-pressure shedding
+
+- `Aquifer.evictMemory()` and `Aquifer.trimToSize(maxEntries)` shed the in-memory tier for wiring a
+  long-lived store to Android's `onLowMemory()`/`onTrimMemory(level)`. `evictMemory()` drops every
+  resident entry; `trimToSize(n)` keeps the `n` most-recently-used and drops the least-recently-used
+  rest. Both are non-suspending, silent, and memory-only: persistence is untouched, so each dropped
+  key rehydrates from disk (no fetch, unchanged staleness) on its next read. They emit no events,
+  don't fence in-flight fetches, don't count toward `CacheStats.evictions`, and are safe to call on
+  a closed store — like `snapshot()`/`stats()`.
+
+### Fixed — hydration-guard hardening (prerequisites for the above)
+
+Both are only reachable once `evictMemory`/`trimToSize` can drop a just-committed entry (a
+most-recently-used entry is never LRU-evicted, so neither could occur before):
+
+- `commitFetched` now persists **before** bumping the commit sequencer, matching every direct
+  mutation (`put`/`invalidate`/…). This upholds the invariant the `load`/`loadAll` hydration guard
+  relies on — an observer that sees commit sequence *S* also sees disk at *S* — which the previous
+  bump-then-persist order violated, and which a shed dropping the entry mid-persist would otherwise
+  let a racing read exploit to serve its stale pre-commit snapshot.
+- A new `stream` collector no longer serves a stale initial value when a manual shed races its
+  subscription. If a fetch commit lands in the gap between hydration and bus subscription (missed on
+  the bus) and the shed then drops it from memory, the collector's pre-subscription snapshot can no
+  longer be corroborated, so it refetches (or reports the empty state under `CacheOnly`) instead of
+  emitting the stale value. LRU eviction never triggers this path, so the streaming hot path is
+  unaffected.
+
 ### Fixed — residual hydration race
 
 - `load`/`loadAll` read persistence outside the commit lock and, under the lock, re-checked only

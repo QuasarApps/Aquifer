@@ -33,8 +33,8 @@ import kotlin.time.Duration
  */
 // The public contract: each function is a distinct, cohesive cache operation — not a class
 // to decompose. (read/observe: stream, get, fresh, prefetch, getAll, snapshot, stats; mutate:
-// put, putAll, invalidate, invalidateWhere, invalidateAll; revalidate: revalidateActive,
-// revalidateOn; lifecycle: close.)
+// put, putAll, invalidate, invalidateWhere, invalidateAll; memory management: evictMemory,
+// trimToSize; revalidate: revalidateActive, revalidateOn; lifecycle: close.)
 @Suppress("TooManyFunctions")
 public interface Aquifer<K : Any, V : Any> : AutoCloseable {
 
@@ -295,6 +295,48 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
     public fun stats(): CacheStats
 
     /**
+     * Sheds the entire in-memory tier without touching persistence — the memory-pressure companion
+     * to [snapshot]/[stats], for wiring a long-lived store to Android's `onLowMemory()`. Every
+     * resident entry is dropped from memory; the configured source of truth is left intact, so each
+     * dropped key rehydrates from disk — no network fetch, unchanged staleness — on its next read.
+     * Equivalent to [trimToSize] with `0`.
+     *
+     * Non-suspending and silent: like [snapshot]/[stats] it never suspends, never touches
+     * persistence, emits no events, and is safe to call from any thread and on a closed store. It
+     * does **not** fence in-flight fetches, advance write epochs, or notify streams (contrast
+     * [invalidateAll], which wipes persistence too and drives every observer): active streams keep
+     * their current value and observe no new state; only the next cache *read* — a [get], [getAll],
+     * or newly collected [stream] — sees the drop, as a one-off persistence rehydration. Manual
+     * shedding is not an LRU eviction and does not count toward [CacheStats.evictions]; [snapshot]
+     * reflects the smaller cache immediately.
+     *
+     * On a store with **no** persistence the memory tier is the only tier, so dropped data is gone:
+     * the next read misses and re-fetches (or, under [Freshness.CacheOnly], yields the empty state /
+     * throws [CacheMissException]).
+     */
+    public fun evictMemory()
+
+    /**
+     * Trims the in-memory tier to at most [maxEntries] entries, dropping the least-recently-used
+     * beyond that and keeping the most-recently-used — the graduated companion to [evictMemory] for
+     * answering Android's `onTrimMemory(level)` with a level-scaled target. Reads and writes both
+     * count as use, so the survivors are the hottest keys. `0` drops everything, exactly like
+     * [evictMemory]; a value at or above the current entry count is a no-op.
+     *
+     * Same guarantees as [evictMemory]: persistence untouched (dropped keys rehydrate from disk on
+     * their next read — no fetch, unchanged staleness); non-suspending and silent (no events, no
+     * fencing, no epoch bump, no [CacheStats.evictions] increment); safe on a closed store; and
+     * invisible to active streams until their next read.
+     *
+     * @param maxEntries the maximum number of most-recently-used entries to retain; must be
+     *   non-negative. This is a one-shot target applied to the current contents, **not** a new
+     *   capacity — the store keeps its configured `memoryCache { maxEntries }`, so the cache may
+     *   refill past this number on later reads.
+     * @throws IllegalArgumentException if [maxEntries] is negative.
+     */
+    public fun trimToSize(maxEntries: Int)
+
+    /**
      * Triggers a refresh for every key that currently has an active [stream] collector and
      * whose entry is stale or missing. Fresh entries and keys observed only by
      * [Freshness.CacheOnly] streams are skipped, and concurrent refreshes share fetches as
@@ -322,10 +364,11 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
     /**
      * Closes the store: cancels in-flight fetches and stops update delivery. Streams stop
      * receiving emissions, subsequent calls to other members throw [IllegalStateException]
-     * (except [snapshot], a read-only memory peek that stays callable), and callers already
-     * awaiting a fetch get an [AquiferException] (never a bare cancellation of their own
-     * coroutine). Cancelling the scope passed to [AquiferBuilder.scope] has the same effect.
-     * Closing an already-closed store is a no-op.
+     * (except the non-suspending memory-only operations [snapshot]/[stats]/[evictMemory]/
+     * [trimToSize], which stay callable), and callers already awaiting a fetch get an
+     * [AquiferException] (never a bare cancellation of their own coroutine). Cancelling the scope
+     * passed to [AquiferBuilder.scope] has the same effect. Closing an already-closed store is a
+     * no-op.
      */
     override fun close()
 }

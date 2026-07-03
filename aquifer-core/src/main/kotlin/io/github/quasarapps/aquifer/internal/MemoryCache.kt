@@ -54,10 +54,35 @@ internal class MemoryCache<K : Any, V : Any>(private val maxEntries: Int) {
         synchronized(lock) { entries.clear() }
     }
 
+    /**
+     * Retains at most [maxSize] most-recently-used entries, dropping the least-recently-used rest;
+     * `maxSize <= 0` clears the cache and `maxSize >= size` is a no-op. Iterates in access order
+     * (least-recently-used first) under the monitor and removes through the iterator, so it never
+     * fires [removeEldestEntry] — manual trimming is deliberately not counted as an LRU eviction
+     * (see [evictions]). Iterating to remove does not itself count as use (only [get]/[put] reorder).
+     */
+    fun trimToSize(maxSize: Int) {
+        synchronized(lock) {
+            if (maxSize <= 0) {
+                entries.clear()
+                return
+            }
+            if (entries.size <= maxSize) return
+            val victims = entries.entries.iterator() // access-order: least-recently-used first
+            while (entries.size > maxSize && victims.hasNext()) {
+                victims.next()
+                victims.remove()
+            }
+        }
+    }
+
     /** Snapshot of the resident keys; iterating the key set does not count as LRU use. */
     fun keys(): Set<K> = synchronized(lock) { LinkedHashSet(entries.keys) }
 
-    /** Entries dropped by LRU eviction since construction; a lock-free read for stats(). */
+    /**
+     * Entries dropped by capacity (LRU) eviction since construction; a lock-free read for stats().
+     * Manual memory shedding via [clear]/[trimToSize] is deliberately not counted.
+     */
     fun evictions(): Long = evictionCount.get()
 
     private companion object {

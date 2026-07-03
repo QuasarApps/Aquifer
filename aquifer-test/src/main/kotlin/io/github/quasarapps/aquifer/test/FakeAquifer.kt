@@ -323,6 +323,27 @@ public class FakeAquifer<K : Any, V : Any> internal constructor(
     /** The fake doesn't track cache counters — assert on [fetchCount]/[fetchedKeys] instead. */
     override fun stats(): CacheStats = CacheStats.EMPTY
 
+    /**
+     * Drops the fake's whole cache. The fake has no persistence tier, so — like a real store
+     * configured without one — dropped keys are gone until re-fetched, not rehydrated from disk.
+     */
+    override fun evictMemory() {
+        cache.value = emptyMap()
+    }
+
+    /**
+     * Trims the fake's cache to at most [maxEntries] entries. The fake tracks no access order, so it
+     * keeps an arbitrary [maxEntries] entries rather than the real store's most-recently-used ones;
+     * assert on cache *size* here, and use a real `Aquifer` to assert exact LRU victims.
+     */
+    override fun trimToSize(maxEntries: Int) {
+        require(maxEntries >= 0) { "maxEntries must be non-negative, was $maxEntries" }
+        val current = cache.value
+        if (current.size > maxEntries) {
+            cache.value = current.entries.take(maxEntries).associate { it.key to it.value }
+        }
+    }
+
     override suspend fun revalidateActive() {
         checkOpen() // no-op: the fake tracks no active collectors; drive refreshes with fresh()/get
     }
