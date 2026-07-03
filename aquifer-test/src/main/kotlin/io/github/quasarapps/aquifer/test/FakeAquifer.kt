@@ -326,6 +326,11 @@ public class FakeAquifer<K : Any, V : Any> internal constructor(
     /**
      * Drops the fake's whole cache. The fake has no persistence tier, so — like a real store
      * configured without one — dropped keys are gone until re-fetched, not rehydrated from disk.
+     *
+     * **Divergence:** the fake models a single tier and drives its streams straight off it, so unlike
+     * the real store — whose shed is silent, leaving active collectors on their current value — a shed
+     * here reaches active `CacheOnly` collectors (they see the key vanish and emit the empty state),
+     * the same way [invalidateAll] does. Don't assert stream-silence around a shed against the fake.
      */
     override fun evictMemory() {
         cache.value = emptyMap()
@@ -334,7 +339,8 @@ public class FakeAquifer<K : Any, V : Any> internal constructor(
     /**
      * Trims the fake's cache to at most [maxEntries] entries. The fake tracks no access order, so it
      * keeps an arbitrary [maxEntries] entries rather than the real store's most-recently-used ones;
-     * assert on cache *size* here, and use a real `Aquifer` to assert exact LRU victims.
+     * assert on cache *size* here, and use a real `Aquifer` to assert exact LRU victims. Like
+     * [evictMemory], a trim is visible to active `CacheOnly` collectors (see there).
      */
     override fun trimToSize(maxEntries: Int) {
         require(maxEntries >= 0) { "maxEntries must be non-negative, was $maxEntries" }

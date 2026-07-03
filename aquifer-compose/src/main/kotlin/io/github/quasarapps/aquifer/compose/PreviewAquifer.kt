@@ -125,7 +125,11 @@ private class PreviewAquifer<K : Any, V : Any>(seed: Map<K, V>) : Aquifer<K, V> 
     override fun trimToSize(maxEntries: Int) {
         require(maxEntries >= 0) { "maxEntries must be non-negative, was $maxEntries" }
         snapshots.update { current ->
-            if (current.size <= maxEntries) current else current.entries.take(maxEntries).associate { it.key to it.value }
+            if (current.size <= maxEntries) {
+                current
+            } else {
+                current.entries.take(maxEntries).associate { it.key to it.value }
+            }
         }
     }
 

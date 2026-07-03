@@ -514,7 +514,9 @@ assertEquals(1, users.fetchCount("grace")) // assert it fetched, exactly once
 time-to-live** (a cached value never goes stale on its own, so `maxAge` is validated but inert),
 **no single-flight deduplication** (two *concurrent* loads of the same missing key each fetch and
 each count), and reports `stats()` as `CacheStats.EMPTY` — assert on `fetchCount`/`fetchedKeys`
-instead. For TTL, staleness, or single-flight behavior, test against the real store paired with
+instead. Its `evictMemory()`/`trimToSize()` model a single cache tier, so (unlike the real store's
+silent shed) they reach active `CacheOnly` collectors and don't keep LRU recency. For TTL,
+staleness, single-flight, or shed-around-stream behavior, test against the real store paired with
 `FakeClock`.
 
 ## Design notes
