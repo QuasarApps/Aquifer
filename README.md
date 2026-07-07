@@ -443,6 +443,29 @@ A hit is a read satisfied from cache under its requested `Freshness` without awa
 other read — the policy needed a fetch, or `CacheOnly` found nothing (`NetworkFirst`/`NetworkOnly`
 always miss). Background revalidation and prefetch warmups aren't counted.
 
+### Answering memory pressure
+
+The memory tier is a cache, not the source of truth, so it's safe to shed under pressure.
+`evictMemory()` drops every resident entry; `trimToSize(maxEntries)` keeps the `maxEntries`
+most-recently-used and drops the least-recently-used rest. Both are non-suspending, silent, and
+memory-only — persistence is untouched, so each dropped key rehydrates from disk (no network fetch,
+unchanged staleness) on its next read.
+
+```kotlin
+override fun onTrimMemory(level: Int) = when {
+    level >= TRIM_MEMORY_COMPLETE -> users.evictMemory()
+    level >= TRIM_MEMORY_MODERATE -> users.trimToSize(64)
+    else -> Unit
+}
+
+override fun onLowMemory() = users.evictMemory()
+```
+
+Like `snapshot()`/`stats()` they're safe to call from anywhere, including a closed store, and they
+don't disturb active streams, fence in-flight fetches, or count toward `stats().evictions`. On a
+store with **no** persistence the memory tier is the only tier, so dropped data is gone and the next
+read re-fetches — reach for these on a persistence-backed store.
+
 ## Testing your repositories
 
 Aquifer takes time and concurrency as injectable dependencies, so tests are deterministic:
@@ -491,7 +514,9 @@ assertEquals(1, users.fetchCount("grace")) // assert it fetched, exactly once
 time-to-live** (a cached value never goes stale on its own, so `maxAge` is validated but inert),
 **no single-flight deduplication** (two *concurrent* loads of the same missing key each fetch and
 each count), and reports `stats()` as `CacheStats.EMPTY` — assert on `fetchCount`/`fetchedKeys`
-instead. For TTL, staleness, or single-flight behavior, test against the real store paired with
+instead. Its `evictMemory()`/`trimToSize()` model a single cache tier, so (unlike the real store's
+silent shed) they reach active `CacheOnly` collectors and don't keep LRU recency. For TTL,
+staleness, single-flight, or shed-around-stream behavior, test against the real store paired with
 `FakeClock`.
 
 ## Design notes

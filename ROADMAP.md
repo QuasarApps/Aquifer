@@ -275,13 +275,15 @@ The engine's guarantees deserve machine-checked evidence.
 Small, high-frequency conveniences surfaced while building the feature set; each must keep
 the existing fencing and single-flight guarantees.
 
-- [ ] **`evictMemory()` / `trimToSize(n)`** *(unblocked — the hydration-race fix below has shipped)* —
-  shed the in-memory tier without touching persistence (rehydrating from disk on the next read), so a
-  long-lived store can answer Android's `onTrimMemory`/`onLowMemory`. Today only `invalidateAll` drops
-  memory, and it wipes persistence too. The two methods themselves are simple (non-suspending, silent,
-  memory-only); the design + adversarial-verification pass found they exposed the residual hydration
-  race below (dropping a just-committed **MRU** entry a suspended `load()` relied on for its under-lock
-  memory re-check), which is now closed — so this can proceed. An optional proactive memory-TTL sweep is
+- [x] **`evictMemory()` / `trimToSize(n)`** (shipped) — shed the in-memory tier without touching
+  persistence (dropped keys rehydrate from disk on the next read), so a long-lived store can answer
+  Android's `onLowMemory`/`onTrimMemory(level)`. Non-suspending, silent (no events, no fencing, no
+  epoch bump), memory-only, safe on a closed store — like `snapshot`/`stats`; manual shedding is not
+  counted in `CacheStats.evictions`. Shipping these required one prerequisite fix in the same change:
+  `commitFetched` now persists *before* bumping the sequencer (matching every other writer), which
+  the hydration guard's "sequence *S* observed ⇒ disk at *S*" invariant depends on — otherwise an
+  eviction dropping a just-committed entry mid-persist would let a racing `load` serve its stale
+  pre-commit snapshot (mutation-verified regression test). An optional proactive memory-TTL sweep is
   a separate companion. *(M)*
 - [x] **Close the `load()`/`loadAll()` residual hydration race** (shipped) — `load` reads persistence
   *outside* `commitGuard` and re-checks only memory under the lock; since fetch commits don't move the

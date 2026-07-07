@@ -131,6 +131,16 @@ internal class RealAquifer<K : Any, V : Any>(
     private val sequencer = AtomicLong()
 
     /**
+     * Counts manual memory sheds ([evictMemory]/[trimToSize]) — never LRU eviction. A new stream
+     * collector snapshots this before hydrating; if it advances before the collector primes, a shed
+     * raced the subscription and may have dropped a fetch commit the collector both missed on the
+     * bus (pre-subscription) and can no longer see in memory, so [prime] must not trust its
+     * pre-lock snapshot (see [reconcileSnapshot]). LRU eviction never touches this, so the streaming
+     * hot path is unaffected — only a shed racing a fresh subscription forces the safe path.
+     */
+    private val manualEvictionGen = AtomicLong()
+
+    /**
      * Failure memory for negative caching (used only when [negativeCache] is set): the last
      * terminal failure per key with its suppression deadline. Entries are removed only on a
      * successful commit or on [put]/[invalidate]/[invalidateAll] — an *expired* entry stays,
@@ -240,6 +250,10 @@ internal class RealAquifer<K : Any, V : Any>(
         // Captured before hydration so prime() can tell pure LRU eviction (epoch untouched)
         // apart from invalidation when memory comes up empty.
         val preloadEpoch = epochFence.capture(key)
+        // Also captured before hydration: if a manual shed (evictMemory/trimToSize) advances this
+        // before prime() runs, it may have dropped a fetch commit this not-yet-subscribed collector
+        // missed on the bus, so prime() must not trust the pre-lock snapshot (see reconcileSnapshot).
+        val preloadEvictionGen = manualEvictionGen.get()
         // Hydrate from persistence BEFORE subscribing to the bus: storage I/O must never run
         // inside the subscription, where a subscriber that is not consuming yet would
         // backpressure every emitter in the store. prime() re-reads memory once subscribed,
@@ -247,7 +261,7 @@ internal class RealAquifer<K : Any, V : Any>(
         val preloaded = if (freshness == Freshness.NetworkOnly) null else load(key)
         val tracker = StreamTracker(key, freshness, maxAge, downstream = this)
         events
-            .onSubscription { prime(key, freshness, maxAge, preloaded, preloadEpoch) }
+            .onSubscription { prime(key, freshness, maxAge, preloaded, preloadEpoch, preloadEvictionGen) }
             .buffer(Channel.UNLIMITED)
             .flowOn(busDrainContext)
             .collect { event -> tracker.onEvent(event) }
@@ -803,6 +817,24 @@ internal class RealAquifer<K : Any, V : Any>(
     override fun stats(): CacheStats =
         CacheStats(hits.get(), misses.get(), memory.evictions(), epochFence.inFlightSize)
 
+    // Non-suspending memory-only shedding for onTrimMemory/onLowMemory: guarded by MemoryCache's own
+    // monitor, never commitGuard (a suspending Mutex can't be taken here), and no checkOpen — safe on
+    // a closed store like snapshot()/stats(). Persistence, epochs, the negative cache, the in-flight
+    // registry, and the event bus are all untouched, so a dropped key simply rehydrates from disk on
+    // its next read (the load()/loadAll() guard keeps that hydration honest against a racing commit).
+    // The manualEvictionGen bump lets a stream subscription racing this shed take the safe path (see
+    // prime()/reconcileSnapshot); load()/loadAll() re-read disk instead and need no such signal.
+    override fun evictMemory() {
+        manualEvictionGen.incrementAndGet()
+        memory.clear()
+    }
+
+    override fun trimToSize(maxEntries: Int) {
+        require(maxEntries >= 0) { "maxEntries must be non-negative, was $maxEntries" }
+        manualEvictionGen.incrementAndGet()
+        memory.trimToSize(maxEntries)
+    }
+
     /** Records one caller read as a hit or a miss for [stats]; see [isCacheHit]. */
     private fun recordRead(freshness: Freshness, present: Boolean, usable: Boolean) {
         if (isCacheHit(freshness, present, usable)) hits.incrementAndGet() else misses.incrementAndGet()
@@ -899,12 +931,20 @@ internal class RealAquifer<K : Any, V : Any>(
         maxAge: Duration?,
         preloaded: Snapshot<V>?,
         preloadEpoch: Epoch,
+        preloadEvictionGen: Long,
     ) {
         // Memory only — the persistence read already happened before subscription (see
         // collectStates); doing I/O here would stall the entire bus. NetworkOnly bypasses
         // cached reads entirely.
         val inMemory = if (freshness == Freshness.NetworkOnly) null else memory.get(key)
-        val snapshot = reconcileSnapshot(preloaded, inMemory, epochUnchanged = epochFence.isCurrent(key, preloadEpoch))
+        val snapshot = reconcileSnapshot(
+            preloaded,
+            inMemory,
+            epochUnchanged = epochFence.isCurrent(key, preloadEpoch),
+            // A manual shed since the preload may have dropped a commit we missed on the bus, so the
+            // pre-lock snapshot can no longer be trusted when memory has nothing to corroborate it.
+            manualEvictRaced = manualEvictionGen.get() != preloadEvictionGen,
+        )
         val entry = snapshot?.entry
         if (snapshot != null) {
             emit(
@@ -1040,8 +1080,14 @@ internal class RealAquifer<K : Any, V : Any>(
 
     /**
      * Commits a freshly-fetched [value] for [key] when its [epoch] is still current: clears
-     * the negative-cache record, writes memory and persistence, and broadcasts `Updated`. A
+     * the negative-cache record, writes persistence and memory, and broadcasts `Updated`. A
      * mutation that raced the fetch leaves the epoch moved, and the commit is dropped.
+     *
+     * Persistence is written *before* the sequencer is bumped, matching every direct mutation
+     * ([put]/[invalidate]/…): that upholds the invariant the hydration guard in [load]/[loadAll]
+     * relies on — an observer seeing commit sequence *S* also sees disk at *S*. Bumping first would
+     * open a window (sequencer already *S*, disk still stale) in which an [evictMemory] dropping the
+     * just-committed entry lets a racing [load] trust its stale pre-lock snapshot.
      */
     private suspend fun commitFetched(key: K, epoch: Epoch, resolved: Resolved<V>, now: Long) {
         val committed: MemoryCache.Entry<V>? = commitGuard.withLock {
@@ -1049,6 +1095,7 @@ internal class RealAquifer<K : Any, V : Any>(
                 // Cleared with the commit it celebrates: a read between commit and a later
                 // clear could otherwise still see the stale suppression window.
                 negative.remove(key)
+                persistFetched(key, resolved.value, now, resolved.validator, resolved.serverFreshForMillis)
                 val entry = MemoryCache.Entry(
                     resolved.value,
                     now,
@@ -1057,7 +1104,6 @@ internal class RealAquifer<K : Any, V : Any>(
                     resolved.serverFreshForMillis,
                 )
                 memory.put(key, entry)
-                persistFetched(key, resolved.value, now, resolved.validator, resolved.serverFreshForMillis)
                 entry
             } else {
                 null
@@ -1380,14 +1426,19 @@ internal class RealAquifer<K : Any, V : Any>(
          *
          * - Memory wins when present; if it is the very commit we hydrated (same sequence),
          *   the preloaded snapshot is kept so its true origin (PERSISTENCE) is reported.
-         * - When memory is empty, an unchanged epoch proves the gap was pure LRU eviction
-         *   and the hydrated snapshot is still valid; a moved epoch means the key was
-         *   invalidated after hydration, so the snapshot must be dropped.
+         * - When memory is empty, an unchanged epoch proves the gap was not an invalidation
+         *   (a moved epoch means the key was invalidated after hydration, so the snapshot must be
+         *   dropped) — but if a manual shed ([manualEvictRaced]) raced the subscription it may have
+         *   dropped a fetch commit this collector also missed on the bus, leaving [preloaded] stale
+         *   with nothing in memory to correct it, so the snapshot is dropped too (the collector then
+         *   refetches, or reports empty under [Freshness.CacheOnly] — never serving the stale value).
+         *   Otherwise the gap was benign (LRU) eviction and the hydrated snapshot stands.
          */
         fun <V : Any> reconcileSnapshot(
             preloaded: Snapshot<V>?,
             inMemory: MemoryCache.Entry<V>?,
             epochUnchanged: Boolean,
+            manualEvictRaced: Boolean,
         ): Snapshot<V>? = when {
             inMemory != null ->
                 if (preloaded != null && preloaded.entry.sequence == inMemory.sequence) {
@@ -1396,7 +1447,7 @@ internal class RealAquifer<K : Any, V : Any>(
                     Snapshot(inMemory, Origin.MEMORY)
                 }
 
-            preloaded != null && epochUnchanged -> preloaded
+            preloaded != null && epochUnchanged && !manualEvictRaced -> preloaded
 
             else -> null
         }

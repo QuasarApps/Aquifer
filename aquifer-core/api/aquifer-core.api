@@ -1,5 +1,6 @@
 public abstract interface class io/github/quasarapps/aquifer/Aquifer : java/lang/AutoCloseable {
 	public abstract fun close ()V
+	public abstract fun evictMemory ()V
 	public abstract fun fresh (Ljava/lang/Object;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun get-5_5nbZA (Ljava/lang/Object;Lio/github/quasarapps/aquifer/Freshness;Lkotlin/time/Duration;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun get-5_5nbZA$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/lang/Object;Lio/github/quasarapps/aquifer/Freshness;Lkotlin/time/Duration;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
@@ -22,6 +23,7 @@ public abstract interface class io/github/quasarapps/aquifer/Aquifer : java/lang
 	public static synthetic fun stream-moChb0s$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/lang/Object;Lio/github/quasarapps/aquifer/Freshness;Lkotlin/time/Duration;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
 	public abstract fun streamMany (Ljava/util/Set;Lio/github/quasarapps/aquifer/Freshness;)Lkotlinx/coroutines/flow/Flow;
 	public static synthetic fun streamMany$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/util/Set;Lio/github/quasarapps/aquifer/Freshness;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun trimToSize (I)V
 }
 
 public final class io/github/quasarapps/aquifer/Aquifer$DefaultImpls {

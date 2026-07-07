@@ -1,6 +1,7 @@
 public final class io/github/quasarapps/aquifer/test/FakeAquifer : io/github/quasarapps/aquifer/Aquifer {
 	public fun close ()V
 	public final fun delays-HG0u8IE (Ljava/lang/Object;J)V
+	public fun evictMemory ()V
 	public final fun failsWith (Ljava/lang/Object;Ljava/lang/Throwable;)V
 	public final fun fetchCount ()I
 	public final fun fetchCount (Ljava/lang/Object;)I
@@ -24,6 +25,7 @@ public final class io/github/quasarapps/aquifer/test/FakeAquifer : io/github/qua
 	public fun stats ()Lio/github/quasarapps/aquifer/CacheStats;
 	public fun stream-moChb0s (Ljava/lang/Object;Lio/github/quasarapps/aquifer/Freshness;Lkotlin/time/Duration;)Lkotlinx/coroutines/flow/Flow;
 	public fun streamMany (Ljava/util/Set;Lio/github/quasarapps/aquifer/Freshness;)Lkotlinx/coroutines/flow/Flow;
+	public fun trimToSize (I)V
 }
 
 public final class io/github/quasarapps/aquifer/test/FakeAquiferBuilder {

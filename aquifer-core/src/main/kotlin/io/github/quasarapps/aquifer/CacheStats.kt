@@ -10,7 +10,9 @@ package io.github.quasarapps.aquifer
  * @property misses caller reads not so satisfied: the policy needed a fetch (no usable cached value,
  *   or a network-first strategy), or [Freshness.CacheOnly] found nothing. A suppressed fetch served
  *   from a stale fallback still counts as a miss when the entry wasn't usable for the policy.
- * @property evictions entries dropped from the in-memory cache by LRU since the store opened.
+ * @property evictions entries dropped from the in-memory cache by capacity (LRU) eviction since the
+ *   store opened. Manual memory shedding via [Aquifer.evictMemory]/[Aquifer.trimToSize], and drops
+ *   from [Aquifer.invalidate]/[Aquifer.invalidateAll], are not counted.
  * @property inFlight size of the single-flight fetch registry at the instant the snapshot was
  *   taken — a gauge, not a total. Counts *joinable* in-flight fetches; a fetch fenced off by
  *   invalidation leaves the registry while its coroutine may still be finishing.

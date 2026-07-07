@@ -23,6 +23,7 @@ import kotlin.test.Test
  */
 @Tag("lincheck")
 @Param(name = "key", gen = IntGen::class, conf = "1:3")
+@Param(name = "maxSize", gen = IntGen::class, conf = "0:2")
 class MemoryCacheEvictionLincheckTest {
 
     private val cache = MemoryCache<Int, Int>(maxEntries = 2)
@@ -40,6 +41,14 @@ class MemoryCacheEvictionLincheckTest {
 
     @Operation
     fun keys(): Set<Int> = cache.keys()
+
+    // The manual-shedding mutators: their access-order trimming must also linearize against
+    // concurrent get/put/remove. maxSize 0:2 spans clear-all, a real trim, and a no-op.
+    @Operation
+    fun trimToSize(@Param(name = "maxSize") maxSize: Int) = cache.trimToSize(maxSize)
+
+    @Operation
+    fun clear() = cache.clear()
 
     @Test
     fun stressTest() = StressOptions()
