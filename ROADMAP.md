@@ -505,10 +505,13 @@ the existing fencing and single-flight guarantees.
   dumps; rename/remove debts now or never. The docket, concretely: *(M)*
   - **`maxAge` symmetry, before the value-class lock.** `maxAge: Duration?` is on `stream` and
     `get` but not on `streamMany`, `getAll`, `prefetch` or `prefetchAll`. Adding a defaulted
-    parameter is source-compatible but **binary**-incompatible for any type — the descriptor and
-    the synthetic `$default` bridge both change — and `Duration` compounds it: as a value class it
-    mangles the JVM name into a signature hash (`get-5_5nbZA`, `stream-moChb0s`), so adding `maxAge`
-    renames `getAll` as well as re-signing it. Already-compiled consumers break either way.
+    parameter is **binary**-incompatible for any type — the descriptor and the synthetic `$default`
+    bridge both change — and `Duration` compounds it: as a value class it mangles the JVM name into
+    a signature hash (`get-5_5nbZA`, `stream-moChb0s`), so adding `maxAge` renames `getAll` as well
+    as re-signing it. Source compatibility splits by role: *call sites* still compile untouched,
+    but because these are members of a fully abstract interface, every third-party **implementor**
+    has to edit its override — which is the interface-stance bullet below, arriving as a
+    consequence rather than a separate decision. Already-compiled consumers break either way.
     Add it across the multi-key entry points, or decide it belongs on none of them; both are free
     now and neither is later.
   - **The `Aquifer` interface's implementation stance.** 19 members, every one abstract, no default

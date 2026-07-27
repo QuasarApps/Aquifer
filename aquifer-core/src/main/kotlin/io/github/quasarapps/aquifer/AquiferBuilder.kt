@@ -317,8 +317,10 @@ public class FreshnessConfig internal constructor() {
      * or pass a per-call `maxAge` to [Aquifer.stream]/[Aquifer.get] — for any of that to happen. An
      * entry whose server horizon has elapsed still goes stale and refetches regardless of this TTL,
      * as do the explicit demands ([Freshness.NetworkFirst], [Freshness.NetworkOnly],
-     * [Aquifer.fresh]). [Aquifer.invalidate] does not fetch either, but it drops the entry, so the
-     * next read is a miss.
+     * [Aquifer.fresh]). [Aquifer.invalidate] fetches too, indirectly: every fetch-capable stream
+     * collecting that key refetches as soon as it observes the drop, so an invalidation with an
+     * active collector hits the network immediately; with no collector it only makes the next read
+     * a miss.
      */
     public var timeToLive: Duration = Duration.INFINITE
         set(value) {
