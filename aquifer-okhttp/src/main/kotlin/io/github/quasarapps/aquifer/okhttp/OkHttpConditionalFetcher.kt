@@ -117,8 +117,10 @@ private fun validatorOf(response: Response): String? {
  * `no-cache`, and `max-age=0` map to [Duration.ZERO] (immediately stale — revalidate on the next
  * read); `max-age` is reduced by any `Age`; `Expires` is consulted only when there is no `max-age`
  * directive, measured against the response `Date` (or its local receipt time when absent). Every
- * result is floored at [Duration.ZERO], and a malformed header yields `null` rather than failing
- * the fetch. Shared-proxy directives (`s-maxage`, `private`, …) are ignored.
+ * result is floored at [Duration.ZERO], and a header the parser cannot use is absorbed rather than
+ * failing the fetch: an unparseable `Age` counts as zero, an unparseable `Date` falls back to the
+ * response's receipt time, and a missing or unusable `Expires` (with no `max-age`) yields `null`.
+ * Shared-proxy directives (`s-maxage`, `private`, …) are ignored.
  */
 private fun parseServerFreshness(response: Response): Duration? = runCatching {
     val cacheControl = response.cacheControl

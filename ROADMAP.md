@@ -19,8 +19,8 @@ mostly a pull request; the tracked issues are #12, #13, #23 and #29. GitHub redi
 
 Everything else compounds once there's a public artifact.
 
-**Where this project actually stands:** roughly six weeks of work, 27 merged PRs, 36 shipped
-roadmap items, and a locked public API of 55 types and 284 non-synthetic members across seven
+**Where this project actually stands:** roughly six weeks of work, 36 shipped roadmap items, and
+a locked public API of 55 types and 284 non-synthetic members across seven
 `*.api` dumps — with **zero published artifacts**. Nobody has ever typed
 `implementation("io.github.quasarapps:…")` against this library, hit a POM problem, or argued
 with a default. Every API decision so far — including the ones about to be frozen at 1.0 — was
@@ -309,8 +309,10 @@ The engine's guarantees deserve machine-checked evidence.
   captures `sequencer.get()` before the off-lock persistence read and re-reads under `commitGuard`
   if it moved. But hydration *itself* advances the sequencer (`load`/`loadAll` allocate a sequence
   for the entry they install), so the guard fires on far more than "a commit raced": two concurrent
-  cold reads of *different* keys trip each other, and each then re-reads persistence while holding
-  the commit lock — and for `loadAll` that re-read is the whole batch again
+  cold reads of *different* keys interfere: the first to take the lock sees an unchanged sequencer
+  and hydrates directly, but its own sequence allocation forces every later contender through the
+  guarded re-read, so N concurrent cold reads cost N−1 extra reads — each performed while holding
+  the commit lock, and for `loadAll` that re-read is the whole batch again
   (`store.readAll(epochs.keys)`), which is exactly the shape of a cold start. Correctness is
   unaffected (the re-read is authoritative); the cost is avoidable I/O in the window where the
   commit lock is most contended. The invariant the guard actually needs is "no *commit*
@@ -466,9 +468,10 @@ the existing fencing and single-flight guarantees.
   authoritative persisted state is re-read under the lock rather than trusting the pre-lock snapshot.
   This is the "re-read under the lock" option, scoped to fire only when the sequencer moved during
   the off-lock read — which is **broader than "a commit raced"**: hydration itself allocates a
-  sequence for the entry it installs, so two concurrent cold reads of *different* keys trip each
-  other's guard, and each re-read happens while holding `commitGuard` (for `loadAll`, the whole
-  batch is re-read). The *uncontended* path is unchanged, but the cold-read path is **not**
+  sequence for the entry it installs, so concurrent cold reads of *different* keys interfere: the
+  first through the lock hydrates directly, and its sequence allocation pushes every later
+  contender onto the guarded re-read, each performed while holding `commitGuard` (for `loadAll`,
+  the whole batch is re-read). The *uncontended* path is unchanged, but the cold-read path is **not**
   unchanged under concurrent reads, so a follow-up keys the guard on a commit-only counter (0.5).
   Correctness is not at stake either way — the re-read is authoritative, bounded at one extra read,
   and writers already do their I/O under that lock. Mutation-verified by a deterministic
@@ -509,7 +512,7 @@ the existing fencing and single-flight guarantees.
     Add it across the multi-key entry points, or decide it belongs on none of them; both are free
     now and neither is later.
   - **The `Aquifer` interface's implementation stance.** 19 members, every one abstract, no default
-    bodies — and `aquifer-test` publishes `FakeAquifer`, which implements it. So every member
+    bodies — and `aquifer-test` exposes `FakeAquifer` as public API, which implements it. So every member
     added after 1.0 breaks every third-party implementor, while at least three items on this
     roadmap (tag invalidation, `getAllStates`, per-key policy) want new members. Pick one and
     write it down: default bodies on additive members, `@SubclassOptInRequired`, or "not intended

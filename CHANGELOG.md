@@ -149,8 +149,10 @@ most-recently-used entry is never LRU-evicted, so neither could occur before):
 - `okHttpConditionalFetcher(…, respectCacheControl = true)` (default `false`, so existing call sites
   are untouched) derives that lifetime from a 2xx response's cache headers: `max-age` minus any
   `Age`, `no-store`/`no-cache`/`max-age=0` as `Duration.ZERO`, and `Expires` measured against `Date`
-  as a fallback when no `max-age` directive is present. Every result is floored at zero, a malformed
-  header yields no opinion (`null`) rather than failing the fetch, and shared-proxy directives
+  as a fallback when no `max-age` directive is present. Every result is floored at zero; a header the
+  parser cannot use is absorbed rather than failing the fetch — an unparseable `Age` counts as zero
+  and an unparseable `Date` falls back to the response's receipt time, while a missing or unusable
+  `Expires` (with no `max-age`) leaves no opinion (`null`) — and shared-proxy directives
   (`s-maxage`, `private`, …) are ignored — this is a private cache.
 
 ### Added — encryption at rest (JsonFileSourceOfTruth)

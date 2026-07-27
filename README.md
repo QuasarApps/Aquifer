@@ -624,9 +624,11 @@ staleness, single-flight, or shed-around-stream behavior, test against the real 
 | `HttpException` *(aquifer-okhttp)* | an unsuccessful response — neither 2xx nor 304 for `okHttpConditionalFetcher`, any non-2xx for the plain `okHttpFetcher`. Carries `code`/`url` and extends `IOException`, so it flows through `retryOn` and `negativeCache` like any transport failure. |
 | `AquiferException` | the base type of `CacheMissException` and `BatchKeyMissingException` (not `HttpException`), and thrown directly to callers awaiting a fetch when the store closes underneath them (never a bare cancellation of the caller's own coroutine). |
 
-Your fetcher's own exceptions are never wrapped: they propagate out of `get`/`fresh` as-is and
-arrive in `DataState.Failure.error` unchanged, which is what makes `retryOn = { it is IOException }`
-work and lets a `DataState.Failure` consumer discriminate on the concrete type.
+Your fetcher's own exceptions are never wrapped: they arrive in `DataState.Failure.error`
+unchanged, which is what makes `retryOn = { it is IOException }` work and lets a `DataState.Failure`
+consumer discriminate on the concrete type. Whether `get` *throws* one depends on stale-if-error:
+`CacheFirst` and `NetworkFirst` return the cached value when a fetch fails and one is available,
+and only rethrow when there is nothing to fall back on; `NetworkOnly`/`fresh` always rethrow.
 
 ### Lifecycle
 
