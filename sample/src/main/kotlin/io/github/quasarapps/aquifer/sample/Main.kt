@@ -21,7 +21,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * A runnable tour of Aquifer: stale-while-revalidate streams, request deduplication, local
+ * A runnable tour of Aquifer's core loop: stale-while-revalidate streams, local
  * writes, retries against a flaky API, surviving a "process restart" via disk persistence,
  * and refresh-on-reconnect.
  *

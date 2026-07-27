@@ -217,8 +217,11 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      * parented to [scope]'s job: cancelling [scope] closes the store, while [Aquifer.close]
      * leaves [scope] untouched.
      *
-     * The default internal scope uses `Dispatchers.Default`. In tests, pass the test
-     * framework's scope to make background work deterministic.
+     * The default internal scope uses `Dispatchers.Default`, so fetches run on a CPU-sized pool:
+     * a fetcher that blocks its thread (synchronous HTTP, JDBC, file I/O) starves that pool and
+     * can stall unrelated work. Wrap such a fetcher in `withContext(Dispatchers.IO) { … }`, or
+     * pass a scope carrying an I/O dispatcher here. In tests, pass the test framework's scope to
+     * make background work deterministic.
      */
     public fun scope(scope: CoroutineScope) {
         this.scope = scope
@@ -303,6 +306,17 @@ public class FreshnessConfig internal constructor() {
      * written. Once older, the entry is *stale*: still servable, but [Freshness] strategies
      * treat it as needing revalidation. Must be positive. Defaults to [Duration.INFINITE]
      * (entries never go stale).
+     *
+     * That default is "cache until told otherwise", and it switches off every staleness-driven
+     * refresh in the store: [Freshness.CacheFirst] serves a cached entry forever and fetches only
+     * on a miss, [Freshness.StaleWhileRevalidate] never revalidates in the background,
+     * [Aquifer.revalidateActive] and [Aquifer.revalidateOn] refresh only the active keys with
+     * nothing cached, and [DataState.Content.isStale] stays `false`. Set a finite value here — or
+     * pass a per-call `maxAge` to [Aquifer.stream]/[Aquifer.get] — for any of that to happen. Two
+     * things still refetch regardless: an entry carrying a server-declared horizon
+     * ([FetchResult.Fresh.freshFor], which takes precedence over this TTL) and the explicit
+     * demands ([Freshness.NetworkFirst], [Freshness.NetworkOnly], [Aquifer.fresh]). [Aquifer.invalidate]
+     * does not fetch either, but it drops the entry, so the next read is a miss.
      */
     public var timeToLive: Duration = Duration.INFINITE
         set(value) {

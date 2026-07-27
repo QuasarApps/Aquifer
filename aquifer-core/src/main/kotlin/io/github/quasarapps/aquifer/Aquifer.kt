@@ -213,6 +213,19 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * the change to your backend remains the caller's responsibility. A fetch already in
      * flight for [key] is fenced off: its response cannot overwrite this newer local value
      * (callers awaiting that fetch still receive its result).
+     *
+     * A local write carries no server metadata: it replaces the entry with one that has neither
+     * a [validator][PersistedEntry.validator] nor a server freshness horizon
+     * ([serverFreshForMillis][PersistedEntry.serverFreshForMillis]), so any validator previously
+     * stored for [key] is dropped — the next [conditional fetch][AquiferBuilder.conditionalFetcher]
+     * of the key goes out unconditionally (a full body instead of a possible `304`) — and the
+     * entry's staleness is governed by the store-wide [FreshnessConfig.timeToLive] (or a per-call
+     * `maxAge`), with no server-declared horizon to override it.
+     *
+     * This is a local write, **not** a pending mutation: there is no rollback and no retry queue.
+     * The written value is authoritative until it goes stale; from then on the next fetch of [key]
+     * silently overwrites it, with no event marking it unconfirmed and no conflict hook. An offline
+     * edit that must survive until the server accepts it needs its own outbox alongside the store.
      */
     public suspend fun put(key: K, value: V)
 
@@ -225,7 +238,12 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * is a no-op.
      *
      * The write is local only; pushing the changes to your backend remains the caller's
-     * responsibility.
+     * responsibility. Each entry carries the same consequences as a single [put]: no
+     * [validator][PersistedEntry.validator] and no server freshness horizon, so a stored validator
+     * for a written key is dropped and its next conditional fetch is unconditional, with staleness
+     * left to the store-wide [FreshnessConfig.timeToLive]. These are local writes, not pending
+     * mutations — no rollback, no retry queue, and once an entry goes stale the next fetch of that
+     * key overwrites it silently.
      */
     public suspend fun putAll(entries: Map<K, V>)
 
@@ -342,6 +360,14 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * [Freshness.CacheOnly] streams are skipped, and concurrent refreshes share fetches as
      * usual. Returns once the refreshes are *triggered*; results arrive through the streams.
      *
+     * Staleness is judged against the entry's own server-declared horizon when it has one
+     * ([FetchResult.Fresh.freshFor]) and otherwise against the store-wide
+     * [FreshnessConfig.timeToLive]. With that TTL left at its default [Duration.INFINITE] no
+     * ordinary cached entry ever counts as stale, so a sweep refreshes only keys with nothing
+     * cached — configure `freshness { timeToLive = … }` for it to do the work its name implies.
+     * The sweep also ignores a stream's per-call `maxAge`: a stream collecting against a tighter
+     * bar is still judged here by the store-wide TTL.
+     *
      * This is the building block for "refresh when the app comes back online / to the
      * foreground" behaviour — see [revalidateOn].
      */
@@ -358,6 +384,12 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * May be called multiple times with different triggers. Collection runs in the store's
      * scope and stops when the store is closed (or the trigger flow completes); a trigger
      * that throws stops only its own subscription.
+     *
+     * Each trigger emission is one [revalidateActive] sweep and inherits its staleness rule: with
+     * the store-wide time-to-live left at its default [Duration.INFINITE], cached entries never
+     * go stale, so a reconnect sweep refreshes only the active keys with nothing cached (a first
+     * fetch that failed while offline still retries) — pair this with `freshness { timeToLive = … }`
+     * to have it revalidate cached data too.
      */
     public fun revalidateOn(trigger: Flow<*>)
 
@@ -369,6 +401,10 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * [AquiferException] (never a bare cancellation of their own coroutine). Cancelling the scope
      * passed to [AquiferBuilder.scope] has the same effect. Closing an already-closed store is a
      * no-op.
+     *
+     * Streams already being collected neither complete nor throw when the store closes: they go
+     * quiet, holding their last emitted state, and their collectors stay suspended. Closing is
+     * therefore not a way to end a collection — cancel the collector's own scope for that.
      */
     override fun close()
 }
