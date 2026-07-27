@@ -107,8 +107,9 @@ validation, but nothing has been published, so none of it has been proven agains
 
 **Read-side only.** `put` is a *local write*, not a pending mutation: there is no rollback, no
 retry queue, and no conflict hook. A written value is authoritative until its TTL expires, after
-which the next fetch silently overwrites it — no event, no callback, and the write clears the
-entry's stored validator, so that fetch goes out unconditional. **An offline edit form built
+which the next fetch overwrites it. That overwrite is observable only as an ordinary fetch — a new
+`DataState.Content` and `onFetchSucceeded` — with nothing to say it replaced a local write, and the
+write clears the entry's stored validator, so that fetch goes out unconditional. **An offline edit form built
 on `put` alone will lose the user's edit once the entry goes stale and the next fetch lands.**
 Keep your own outbox until the planned [`aquifer-mutations`](ROADMAP.md) module lands; `put` is
 for applying a *confirmed* change (a server push, a response you already have) to the cache.
@@ -141,15 +142,16 @@ servable, but due for revalidation:
 | `NetworkFirst` | fetch → cache on failure | fetch → stale on failure | fetch |
 | `NetworkOnly` | fetch | fetch | fetch |
 
-> **`timeToLive` defaults to `Duration.INFINITE` — set one.** With no
-> `freshness { timeToLive = … }` block nothing ever becomes stale, so every strategy above
-> collapses onto its *fresh entry* column: `CacheFirst` serves the first fetch forever,
-> `StaleWhileRevalidate` never revalidates, `revalidateActive()` (and with it
-> `revalidateOnReconnect`/`revalidateOnAppForeground`) refreshes only the active keys with
-> nothing cached — a first fetch that failed while offline still retries — and `isStale`
-> is permanently `false`. What still reaches the network: a cache miss,
-> `NetworkFirst`/`NetworkOnly`, `fresh(key)`, and a per-call `maxAge` or server-declared
-> `freshFor` — nothing else. Give any store whose data can change upstream a `timeToLive`.
+> **`timeToLive` defaults to `Duration.INFINITE` — set one.** Staleness is decided by the first
+> horizon that applies: a per-call `maxAge`, else the entry's server-declared `freshFor`, else this
+> TTL. So with no `freshness { timeToLive = … }` block, any entry carrying *neither* override never
+> becomes stale, and for those entries every strategy above collapses onto its *fresh entry* column:
+> `CacheFirst` serves the first fetch forever, `StaleWhileRevalidate` never revalidates,
+> `revalidateActive()` (and with it `revalidateOnReconnect`/`revalidateOnAppForeground`) refreshes
+> only the active keys with nothing cached — a first fetch that failed while offline still retries —
+> and `isStale` is permanently `false`. What still reaches the network: a cache miss,
+> `NetworkFirst`/`NetworkOnly`, `fresh(key)`, and any entry whose per-call `maxAge` or server-declared
+> `freshFor` has elapsed. Give any store whose data can change upstream a `timeToLive`.
 
 Two multi-key divergences are worth knowing before you reach for them. `getAll` is one-shot and
 awaits every fetch it triggers, so `StaleWhileRevalidate` there behaves like `CacheFirst` — it
@@ -633,9 +635,11 @@ collects them (`viewModelScope`, `backgroundScope`) rather than waiting on the f
 
 ### Threading
 
-The store always runs its work under its own `SupervisorJob`; unless you inject a `scope` it
-dispatches that work on `Dispatchers.Default` —
-so **fetchers execute on the CPU-sized pool**. A suspending, non-blocking fetcher needs nothing;
+Fetches and fire-and-forget work (`prefetch`, background revalidation) run under the store's own
+`SupervisorJob`, on `Dispatchers.Default` unless you inject a `scope` — so **fetchers execute on the
+CPU-sized pool**. One-shot cache reads and writes are *not* moved: `get`/`put` call your
+`SourceOfTruth` on the caller's coroutine, so a blocking persistence implementation blocks its
+caller and must dispatch itself. A suspending, non-blocking fetcher needs nothing;
 a blocking one (`Call.execute()`, JDBC, file reads) must be wrapped, or it will starve the
 default dispatcher under load:
 
@@ -658,14 +662,10 @@ callable from any thread including the main one.
 
 [ROADMAP.md](ROADMAP.md) is the single ordering of record — what has shipped, what is next
 through 1.0 and beyond (KMP, offline mutations, a Paging bridge), and the declared non-goals.
-Near-term:
-
-1. **v0.1.0 on Maven Central** — needs the signing secrets, a fix to the release version gate
-   (it checks five of the seven published modules), and a dated changelog section before the tag.
-2. **Sample Android app** — airplane-mode survival, pull-to-refresh coherence, and reconnect
-   revalidation on a real device.
-3. **Docs site** — `dokkaGenerate` already runs in CI as a compile check; only the Pages deploy
-   is missing.
+Everything before the first tag sits in its **Now** milestone; the headline is **v0.1.0 on Maven
+Central**, which needs the signing secrets, a fix to the release version gate (it checks five of
+the seven published modules), and a dated changelog section. See the roadmap for the rest and for
+their order — this section deliberately does not restate it.
 
 ## Project layout
 

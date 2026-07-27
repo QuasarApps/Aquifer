@@ -307,16 +307,18 @@ public class FreshnessConfig internal constructor() {
      * treat it as needing revalidation. Must be positive. Defaults to [Duration.INFINITE]
      * (entries never go stale).
      *
-     * That default is "cache until told otherwise", and it switches off every staleness-driven
-     * refresh in the store: [Freshness.CacheFirst] serves a cached entry forever and fetches only
-     * on a miss, [Freshness.StaleWhileRevalidate] never revalidates in the background,
-     * [Aquifer.revalidateActive] and [Aquifer.revalidateOn] refresh only the active keys with
-     * nothing cached, and [DataState.Content.isStale] stays `false`. Set a finite value here — or
-     * pass a per-call `maxAge` to [Aquifer.stream]/[Aquifer.get] — for any of that to happen. Two
-     * things still refetch regardless: an entry carrying a server-declared horizon
-     * ([FetchResult.Fresh.freshFor], which takes precedence over this TTL) and the explicit
-     * demands ([Freshness.NetworkFirst], [Freshness.NetworkOnly], [Aquifer.fresh]). [Aquifer.invalidate]
-     * does not fetch either, but it drops the entry, so the next read is a miss.
+     * Staleness is decided by the first horizon that applies: a per-call `maxAge`, else the entry's
+     * server-declared [FetchResult.Fresh.freshFor], else this TTL. So the default is "cache until
+     * told otherwise" for every entry carrying *neither* override, and for those entries it
+     * switches off each staleness-driven refresh: [Freshness.CacheFirst] serves a cached entry
+     * forever and fetches only on a miss, [Freshness.StaleWhileRevalidate] never revalidates in the
+     * background, [Aquifer.revalidateActive] and [Aquifer.revalidateOn] refresh only the active keys
+     * with nothing cached, and [DataState.Content.isStale] stays `false`. Set a finite value here —
+     * or pass a per-call `maxAge` to [Aquifer.stream]/[Aquifer.get] — for any of that to happen. An
+     * entry whose server horizon has elapsed still goes stale and refetches regardless of this TTL,
+     * as do the explicit demands ([Freshness.NetworkFirst], [Freshness.NetworkOnly],
+     * [Aquifer.fresh]). [Aquifer.invalidate] does not fetch either, but it drops the entry, so the
+     * next read is a miss.
      */
     public var timeToLive: Duration = Duration.INFINITE
         set(value) {

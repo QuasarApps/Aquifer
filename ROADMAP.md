@@ -112,7 +112,7 @@ What every consuming app touches daily; highest user-facing leverage.
   and five scenarios (cold start, SWR, `put`, "process death", reconnect-with-retry). It uses no
   batching, no `getAll`/`streamMany`, no `prefetch`, no conditional fetching, no negative caching,
   no `stats`/`snapshot`, no encryption or migration — and nothing that demonstrates single-flight
-  dedup, which the sample's own KDoc still advertises. CI runs `:sample:run` once per workflow
+  dedup. CI runs `:sample:run` once per workflow
   (gated on the JDK-21 matrix leg), so each scenario added is also a free end-to-end smoke test of
   a headline path. *(S)*
 - [x] **`aquifer-compose` module** — `Aquifer.collectAsState(key)` built on
@@ -155,13 +155,14 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
 
 - [ ] **Fix `revalidateActive()` — batch it, honor per-stream `maxAge`, add a force knob** — the
   reconnect path walks `activeKeys` and does a per-key `load()` then `refresh()`: an N+1 over
-  storage on every reconnect, and N fetches where `getAll` would do one (unless the caller happens
-  to have configured a coalescing window). It also cannot see per-stream freshness — `activeKeys`
+  storage on every reconnect, and N individual fetches where a configured `batchFetcher` would
+  collapse them into one. It also cannot see per-stream freshness — `activeKeys`
   is a bare `ConcurrentHashMap<K, Int>` refcount — so a `stream(key, maxAge = 30.seconds)` is
   revalidated against the store-wide TTL instead of the bar its caller asked for. And under the
-  **default** `timeToLive = Duration.INFINITE` nothing cached is ever expired, so a store built
-  with no `freshness { }` block revalidates *only the active keys with nothing cached* on reconnect
-  while looking like it refreshes everything on screen.
+  **default** `timeToLive = Duration.INFINITE` an entry carrying no server-declared `freshFor` is
+  never expired, so a store built with no `freshness { }` block revalidates *only the active keys
+  with nothing cached, plus any whose server horizon has elapsed* on reconnect, while looking like
+  it refreshes everything on screen.
   Batch the staleness check and the refresh through the bulk SPI, carry each registration's
   `maxAge` alongside the refcount, and add an explicit "refresh every active key regardless of
   staleness" escape hatch — pull-to-refresh has no way to express that today. *(M)*
@@ -523,12 +524,13 @@ the existing fencing and single-flight guarantees.
     `get(key, NetworkOnly)`, and the two shedding calls are memory-tier controls. As interface
     members every implementor must write them; as extensions on `Aquifer` they cost implementors
     nothing and shrink the frozen surface by three.
-  - **The default `timeToLive`.** It is `Duration.INFINITE`, and `isExpired` compares
-    `elapsed >= horizon`, so a store built without a `freshness { }` block never refetches under
-    `CacheFirst`, never revalidates under `StaleWhileRevalidate`, refreshes only the active
-    keys with nothing cached on reconnect, and reports `isStale = false` forever. Every README
-    example happens to set a TTL, which is why the default has never bitten. Changing a default
-    is a behavior break after 1.0 and free before.
+  - **The default `timeToLive`.** It is `Duration.INFINITE`, and `isExpired` takes the first
+    horizon that applies (`maxAge ?: freshFor ?: timeToLive`) and compares `elapsed >= horizon`.
+    So for an entry carrying neither override, a store built without a `freshness { }` block
+    never refetches under `CacheFirst`, never revalidates under `StaleWhileRevalidate`, refreshes
+    only the active keys with nothing cached on reconnect, and reports `isStale = false` forever.
+    Every README example happens to set a TTL, which is why the default has never bitten. Changing
+    a default is a behavior break after 1.0 and free before.
 - [ ] **Semver policy + CHANGELOG discipline** documented — what "public API" covers (the BCV
   dumps, not the internals), what a pre-1.0 source break costs, and one entry per change so
   the `[Unreleased]` sprawl the 0.1.0 tag cleans up does not simply re-accumulate. The

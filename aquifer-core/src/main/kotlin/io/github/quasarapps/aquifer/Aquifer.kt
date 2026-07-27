@@ -362,9 +362,10 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      *
      * Staleness is judged against the entry's own server-declared horizon when it has one
      * ([FetchResult.Fresh.freshFor]) and otherwise against the store-wide
-     * [FreshnessConfig.timeToLive]. With that TTL left at its default [Duration.INFINITE] no
-     * ordinary cached entry ever counts as stale, so a sweep refreshes only keys with nothing
-     * cached — configure `freshness { timeToLive = … }` for it to do the work its name implies.
+     * [FreshnessConfig.timeToLive]. With that TTL left at its default [Duration.INFINITE], an entry
+     * whose server horizon has elapsed is still refreshed, but one carrying no horizon never counts
+     * as stale — so a sweep over such entries refreshes only keys with nothing cached. Configure
+     * `freshness { timeToLive = … }` for it to do the work its name implies.
      * The sweep also ignores a stream's per-call `maxAge`: a stream collecting against a tighter
      * bar is still judged here by the store-wide TTL.
      *
@@ -386,10 +387,10 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * that throws stops only its own subscription.
      *
      * Each trigger emission is one [revalidateActive] sweep and inherits its staleness rule: with
-     * the store-wide time-to-live left at its default [Duration.INFINITE], cached entries never
-     * go stale, so a reconnect sweep refreshes only the active keys with nothing cached (a first
-     * fetch that failed while offline still retries) — pair this with `freshness { timeToLive = … }`
-     * to have it revalidate cached data too.
+     * the store-wide time-to-live left at its default [Duration.INFINITE], an entry carrying no
+     * server-declared horizon never goes stale, so a reconnect sweep over such entries refreshes
+     * only the active keys with nothing cached (a first fetch that failed while offline still
+     * retries) — pair this with `freshness { timeToLive = … }` to have it revalidate cached data too.
      */
     public fun revalidateOn(trigger: Flow<*>)
 
