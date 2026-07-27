@@ -223,9 +223,12 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * `maxAge`), with no server-declared horizon to override it.
      *
      * This is a local write, **not** a pending mutation: there is no rollback and no retry queue.
-     * The written value is authoritative until it goes stale; from then on the next fetch of [key]
-     * silently overwrites it, with no event marking it unconfirmed and no conflict hook. An offline
-     * edit that must survive until the server accepts it needs its own outbox alongside the store.
+     * Under the staleness-aware strategies the written value stands until it goes stale; from then
+     * on the first *successful, unfenced* fetch of [key] silently overwrites it, with no event
+     * marking it unconfirmed and no conflict hook. The always-fetch paths do not wait for that:
+     * [Freshness.NetworkFirst], [Freshness.NetworkOnly] and [fresh] fetch even while the write is
+     * fresh, so any of them can replace it immediately. An offline edit that must survive until the
+     * server accepts it needs its own outbox alongside the store.
      */
     public suspend fun put(key: K, value: V)
 
@@ -242,8 +245,10 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * [validator][PersistedEntry.validator] and no server freshness horizon, so a stored validator
      * for a written key is dropped and its next conditional fetch is unconditional, with staleness
      * left to the store-wide [FreshnessConfig.timeToLive]. These are local writes, not pending
-     * mutations — no rollback, no retry queue, and once an entry goes stale the next fetch of that
-     * key overwrites it silently.
+     * mutations — no rollback, no retry queue, and the first successful, unfenced fetch of a written
+     * key silently overwrites it: once the entry goes stale under the staleness-aware strategies, or
+     * immediately under [Freshness.NetworkFirst]/[Freshness.NetworkOnly]/[fresh], which fetch
+     * regardless of freshness.
      */
     public suspend fun putAll(entries: Map<K, V>)
 

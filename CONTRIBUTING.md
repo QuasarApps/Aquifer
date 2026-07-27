@@ -29,7 +29,7 @@ handles everything else.
   store's `scope` and `WallClock`, and assert stream emissions with Turbine. Note that
   `runTest` only drives `backgroundScope` work while the test coroutine is suspended — see
   `TestHelpers.kt`.
-- **`aquifer-test` is a published module**, not an internal test fixture: `fakeAquifer`,
+- **`aquifer-test` is a publishing module**, not an internal test fixture: `fakeAquifer`,
   `FakeClock`, and `settle()` are locked public API that downstream test suites will depend on,
   so changing their behaviour is a user-visible change like any other.
 - **Concurrency tests run separately.** `./gradlew :aquifer-core:lincheckTest` runs the

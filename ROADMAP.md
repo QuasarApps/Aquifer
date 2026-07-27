@@ -44,13 +44,14 @@ are what stands between here and the tag.
   actually ships rather than the deltas that got there — and drop the pre-release `Fixed` entries
   for races no published version ever had. The #48–#51 backfill is done; the collapse is what
   remains. The tag's release notes are cut from this section, so it is a blocker too. *(S)*
-- [ ] **Replace the published `settle()` with `runCurrent()`** — `aquifer-test` publishes
-  `settle()` as `repeat(8) { yield() }`: a fixed hop count standing in for "the scheduler is
-  quiet". Roughly 40 *negative* assertions in the core suite (assert that no fetch happened) pass
-  vacuously if the work they mean to catch needs a ninth hop, and consuming apps are about to
-  inherit the same trap. `runCurrent()` drains everything currently scheduled and is already used
-  27 times in-repo. It needs the `TestScope` receiver, so this is a signature change — free before
-  the tag, a breaking change for consumers once it is published. *(S)*
+- [ ] **Replace `aquifer-test`'s `settle()` with `runCurrent()`** — `aquifer-test` exposes
+  `settle()` as locked public API, implemented as `repeat(8) { yield() }`: a fixed hop count
+  standing in for "the scheduler is quiet". Roughly 40 *negative* assertions in the core suite
+  (assert that no fetch happened) pass vacuously if the work they mean to catch needs a ninth hop,
+  and consuming apps are about to inherit the same trap. `runCurrent()` drains everything
+  currently scheduled and is already used 27 times in-repo. It needs the `TestScope` receiver, so
+  this is a signature change — free before the tag, a breaking change for consumers once it is
+  published. *(S)*
 - [ ] **Publish v0.1.0 to Maven Central** — add the four secrets from
   [CONTRIBUTING](CONTRIBUTING.md), bump the (newly single) version off `-SNAPSHOT`, date the
   CHANGELOG, push `v0.1.0`; the guarded release workflow does the rest. *(owner action — S)*
@@ -476,8 +477,9 @@ the existing fencing and single-flight guarantees.
   surgical `invalidate(key)` and the nuclear `invalidateAll()`, for "drop everything for this
   tenant/scope" resets. Each matched key is dropped and fenced under `commitGuard` exactly like
   `invalidate`, in one commit. **Reach is two-tier, and the store decides which tier applies.** An
-  *enumerable* `SourceOfTruth` — one that overrides `keysWhere` (the SQLDelight adapter does) —
-  makes the predicate **disk-wide**: the union of the keys this process tracks and every persisted
+  *enumerable* `SourceOfTruth` — one whose `keys()` returns non-`null`, which is all the SQLDelight
+  adapter overrides, since the SPI's default `keysWhere` filters `keys()` — makes the predicate
+  **disk-wide**: the union of the keys this process tracks and every persisted
   match, including keys it has never touched. A store that returns `null` (the SPI default) keeps
   the reach in-process-only, and there a persisted-only key stays out of reach (use
   `invalidateAll`). The JSON file store opts out **by design**: its filenames are one-way SHA-256
@@ -573,7 +575,9 @@ deflection, and it stays the answer until the bet below lands.
   both incumbents (Store5's `MutableStore`/`Updater`/`Bookkeeper`; TanStack/RTK `useMutation`
   with optimistic update + rollback). Note what `put()` is and is not today: it is an
   **authoritative local write**, fenced against in-flight fetches, that stands until the TTL
-  expires and is then silently replaced by the next fetch — no rollback, no conflict hook, no
+  expires under the staleness-aware strategies — but not at all under
+  `NetworkFirst`/`NetworkOnly`/`fresh`, which fetch regardless — and is then silently replaced by
+  the first successful, unfenced fetch: no rollback, no conflict hook, no
   event distinguishing "your write" from "the server's answer". That is *not* what "optimistic"
   means in Store5/TanStack/RTK, where it means provisional-pending-confirmation with rollback, and
   the gap is a data-loss trap for anyone wiring an offline edit form. Consider pulling a **minimal

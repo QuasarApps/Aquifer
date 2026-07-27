@@ -94,7 +94,7 @@ Aquifer does differently is narrow and specific:
 - **Conditional fetching that survives restarts.** Validators (`ETag`/`Last-Modified`) and a
   server-declared `freshFor` are stored next to the value in the `SourceOfTruth`, so a cold start
   revalidates with a 304 rather than re-downloading.
-- **A published fake.** `fakeAquifer` is public API in `aquifer-test` — a programmable store with
+- **A first-class fake.** `fakeAquifer` is public API in `aquifer-test` — a programmable store with
   assertable fetch counts — not a test-source copy each consumer rewrites.
 
 And the honest losses: Aquifer is **JVM/Android only**, so a data layer shared with iOS is a real
@@ -107,7 +107,9 @@ validation, but nothing has been published, so none of it has been proven agains
 
 **Read-side only.** `put` is a *local write*, not a pending mutation: there is no rollback, no
 retry queue, and no conflict hook. A written value is authoritative until its TTL expires, after
-which the next fetch overwrites it. That overwrite is observable only as an ordinary fetch — a new
+which the first successful, unfenced fetch overwrites it — and the always-fetch strategies
+(`NetworkFirst`, `NetworkOnly`, `fresh(key)`) do not wait for the TTL at all, so any of them
+replaces the write immediately. That overwrite is observable only as an ordinary fetch — a new
 `DataState.Content` and `onFetchSucceeded` — with nothing to say it replaced a local write, and the
 write clears the entry's stored validator, so that fetch goes out unconditional. **An offline edit form built
 on `put` alone will lose the user's edit once the entry goes stale and the next fetch lands.**
@@ -185,8 +187,9 @@ suspend fun onUserEdited(id: UserId, edited: User) {
 }
 ```
 
-`put` writes to the cache and nothing else — it is not an optimistic mutation, and the next fetch
-after the entry's TTL expires overwrites it without ceremony. See
+`put` writes to the cache and nothing else — it is not an optimistic mutation, and the next
+successful fetch overwrites it without ceremony (after the TTL under the staleness-aware
+strategies, immediately under `NetworkFirst`/`NetworkOnly`/`fresh`). See
 [What Aquifer is not](#what-aquifer-is-not) before building an offline edit form on it.
 
 ### One-shot reads
