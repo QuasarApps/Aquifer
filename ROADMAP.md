@@ -96,7 +96,7 @@ are what stands between here and the tag.
   the *Test* task launcher. That job covers four modules: `aquifer-core`, `aquifer-test`,
   `aquifer-persistence-file`, `aquifer-okhttp`. **`aquifer-persistence-sqldelight` is excluded**,
   and the two Android modules run under Robolectric on the host JDK, so "runs on a JDK 11
-  runtime" is verified for four of the seven published modules, not all seven. *(S)*
+  runtime" is verified for four of the seven modules configured for publication, not all seven. *(S)*
 - [x] **Fence fetches at registration (correctness fix, shipped — #42)** — `refreshWith`
   captured the fetch's epoch in the lazily-started body, which runs *after* `inFlight.putIfAbsent`;
   a `put`/`invalidate` in that gap bumped the epoch but the fetch then read the *post-bump* epoch,
@@ -501,10 +501,11 @@ the existing fencing and single-flight guarantees.
 - [ ] **API freeze review** — a deliberate pass over every public signature against the locked BCV
   dumps; rename/remove debts now or never. The docket, concretely: *(M)*
   - **`maxAge` symmetry, before the value-class lock.** `maxAge: Duration?` is on `stream` and
-    `get` but not on `streamMany`, `getAll`, `prefetch` or `prefetchAll`. Because `Duration` is a
-    value class, the JVM name of a method taking one is a signature hash (`get-5_5nbZA`,
-    `stream-moChb0s`), so *adding* the parameter after 1.0 renames the method — a hard **binary**
-    break, not the source-compatible default-argument addition it would be for any other type.
+    `get` but not on `streamMany`, `getAll`, `prefetch` or `prefetchAll`. Adding a defaulted
+    parameter is source-compatible but **binary**-incompatible for any type — the descriptor and
+    the synthetic `$default` bridge both change — and `Duration` compounds it: as a value class it
+    mangles the JVM name into a signature hash (`get-5_5nbZA`, `stream-moChb0s`), so adding `maxAge`
+    renames `getAll` as well as re-signing it. Already-compiled consumers break either way.
     Add it across the multi-key entry points, or decide it belongs on none of them; both are free
     now and neither is later.
   - **The `Aquifer` interface's implementation stance.** 19 members, every one abstract, no default

@@ -120,8 +120,9 @@ most-recently-used entry is never LRU-evicted, so neither could occur before):
   extra configuration it flows through the normal fetch-failure path (retry policy,
   `DataState.Failure`, stale-if-error) exactly as before. What changes is that a resilience policy
   can branch on the status: `retryOn = { it is HttpException && it.code >= 500 }` retries server
-  errors only and leaves a `404` a terminal miss, and any code reading a `DataState.Failure` can
-  discriminate the same way.
+  errors only and lets a `404` fail fast instead of burning every attempt. A `404` stays a fetch
+  *failure* either way — it is surfaced as `DataState.Failure`, never translated into a cache miss
+  or `DataState.Empty` — and any code reading that failure can discriminate the same way.
 - **`okHttpFetcher(callFactory, request, parse)`**: the plain (non-conditional) counterpart of
   `okHttpConditionalFetcher`, for backends that don't speak `ETag`/`Last-Modified` and so have
   nothing to revalidate against. A 2xx body goes to `parse`; any other status throws

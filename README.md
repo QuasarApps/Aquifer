@@ -159,7 +159,8 @@ Two multi-key divergences are worth knowing before you reach for them. `getAll` 
 awaits every fetch it triggers, so `StaleWhileRevalidate` there behaves like `CacheFirst` — it
 blocks on the network rather than serving stale; use `streamMany` when you want
 serve-stale-then-revalidate across many keys. And `maxAge` is a `get`/`stream` knob only:
-`getAll`/`streamMany`/`prefetch`/`prefetchAll` take `freshness` alone and follow the store's TTL.
+`getAll`/`streamMany`/`prefetch`/`prefetchAll` take `freshness` alone, judging staleness against
+each entry's server-declared `freshFor` when it has one and the store's TTL otherwise.
 
 ### Streams keep every observer coherent
 
@@ -667,7 +668,7 @@ callable from any thread including the main one.
 through 1.0 and beyond (KMP, offline mutations, a Paging bridge), and the declared non-goals.
 Everything before the first tag sits in its **Now** milestone; the headline is **v0.1.0 on Maven
 Central**, which needs the signing secrets, a fix to the release version gate (it checks five of
-the seven published modules), and a dated changelog section. See the roadmap for the rest and for
+the seven modules configured for publication), and a dated changelog section. See the roadmap for the rest and for
 their order — this section deliberately does not restate it.
 
 ## Project layout
