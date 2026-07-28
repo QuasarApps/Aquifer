@@ -304,8 +304,8 @@ public class FreshnessConfig internal constructor() {
     /**
      * How long a cached entry is considered fresh, measured from the moment it was fetched or
      * written. Once older, the entry is *stale*: still servable, but [Freshness] strategies
-     * treat it as needing revalidation. Must be positive. Defaults to [Duration.INFINITE]
-     * (entries never go stale).
+     * treat it as needing revalidation. Must be positive. Defaults to [Duration.INFINITE], under
+     * which an entry goes stale only when some *other* horizon applies to it — see below.
      *
      * Staleness is decided by the first horizon that applies: a per-call `maxAge`, else the entry's
      * server-declared [FetchResult.Fresh.freshFor], else this TTL. So the default is "cache until
@@ -313,8 +313,10 @@ public class FreshnessConfig internal constructor() {
      * switches off each staleness-driven refresh: [Freshness.CacheFirst] serves a cached entry
      * forever and fetches only on a miss, [Freshness.StaleWhileRevalidate] never revalidates in the
      * background, [Aquifer.revalidateActive] and [Aquifer.revalidateOn] refresh only the active keys
-     * with nothing cached, and [DataState.Content.isStale] stays `false`. Set a finite value here —
-     * or pass a per-call `maxAge` to [Aquifer.stream]/[Aquifer.get] — for any of that to happen. An
+     * with nothing cached, and [DataState.Content.isStale] stays `false`. Set a finite value here for
+     * all of that to happen again. A per-call `maxAge` on [Aquifer.stream]/[Aquifer.get] is the
+     * narrower lever: it restores staleness for those reads alone, because [Aquifer.revalidateActive]
+     * and [Aquifer.revalidateOn] ignore it and judge every key by the server horizon or this TTL. An
      * entry whose server horizon has elapsed still goes stale and refetches regardless of this TTL,
      * as do the explicit demands ([Freshness.NetworkFirst], [Freshness.NetworkOnly],
      * [Aquifer.fresh]). [Aquifer.invalidate] fetches too, indirectly: every fetch-capable stream

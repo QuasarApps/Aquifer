@@ -361,9 +361,10 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
 
     /**
      * Triggers a refresh for every key that currently has an active [stream] collector and
-     * whose entry is stale or missing. Fresh entries and keys observed only by
-     * [Freshness.CacheOnly] streams are skipped, and concurrent refreshes share fetches as
-     * usual. Returns once the refreshes are *triggered*; results arrive through the streams.
+     * whose entry is stale or missing. Fresh entries, keys observed only by
+     * [Freshness.CacheOnly] streams, and keys still inside a [NegativeCacheConfig] suppression
+     * window are skipped, and concurrent refreshes share fetches as usual. Returns once the
+     * refreshes are *triggered*; results arrive through the streams.
      *
      * Staleness is judged against the entry's own server-declared horizon when it has one
      * ([FetchResult.Fresh.freshFor]) and otherwise against the store-wide
@@ -394,8 +395,10 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * Each trigger emission is one [revalidateActive] sweep and inherits its staleness rule: with
      * the store-wide time-to-live left at its default [Duration.INFINITE], an entry carrying no
      * server-declared horizon never goes stale, so a reconnect sweep over such entries refreshes
-     * only the active keys with nothing cached (a first fetch that failed while offline still
-     * retries) — pair this with `freshness { timeToLive = … }` to have it revalidate cached data too.
+     * only the active keys with nothing cached (a first fetch that failed while offline retries on
+     * the next emission — unless negative caching is configured and still suppressing that key, in
+     * which case the reconnect sweep skips it until the window elapses) — pair this with
+     * `freshness { timeToLive = … }` to have it revalidate cached data too.
      */
     public fun revalidateOn(trigger: Flow<*>)
 

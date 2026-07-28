@@ -21,9 +21,9 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * A runnable tour of Aquifer's core loop: stale-while-revalidate streams, local
- * writes, retries against a flaky API, surviving a "process restart" via disk persistence,
- * and refresh-on-reconnect.
+ * A runnable tour of Aquifer's core loop: stale-while-revalidate streams, applying an
+ * already-confirmed change to the cache, retries against a flaky API, surviving a "process
+ * restart" via disk persistence, and refresh-on-reconnect.
  *
  * Run it with: `./gradlew :sample:run`
  */
@@ -86,8 +86,10 @@ fun main(): Unit = runBlocking {
     log("get -> \"${stale.title}\" rev=${stale.revision} (served stale immediately; refresh runs in background)")
     delay(600)
 
-    banner("3. Local writes broadcast to every observer")
-    firstProcess.put(1, Article(1, "Article #1 (edited offline)", revision = -1))
+    banner("3. A confirmed change (here: a server push) broadcasts to every observer")
+    // `put` applies data the server has already accepted. It is deliberately not an offline-edit
+    // outbox: the next fetch replaces it, so an unsynced user edit written this way would be lost.
+    firstProcess.put(1, Article(1, "Article #1 (revised upstream)", revision = 99))
     delay(200)
 
     banner("4. 'Process death': a brand-new store serves the last data from disk, no network")
