@@ -1,15 +1,18 @@
 package io.github.quasarapps.aquifer
 
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 
 /**
- * Suspends the test coroutine long enough for work already scheduled on the store's
- * (background) scope to run to completion.
+ * Runs every task already scheduled on this [TestScope]'s scheduler — including follow-up tasks
+ * that work itself schedules — until the queue at the current virtual time is empty.
  *
- * `runTest` only executes background work while the test coroutine itself is suspended, so
- * fire-and-forget effects — like a stale-while-revalidate refresh — need an explicit
- * suspension point before they can be asserted on.
+ * Fire-and-forget effects (a stale-while-revalidate refresh, a prefetch) land on the store's
+ * injected scope rather than running inline, so the scheduler must be driven before asserting on
+ * them. Unlike the yield-loop this replaces, draining is complete by construction: work needing
+ * more scheduler hops than a fixed yield count cannot silently satisfy a negative assertion. It
+ * does not advance virtual time — delay-gated work still needs `advanceUntilIdle()`.
  */
-suspend fun settle() {
-    repeat(8) { yield() }
+fun TestScope.settle() {
+    runCurrent()
 }

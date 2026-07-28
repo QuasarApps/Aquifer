@@ -26,10 +26,12 @@ java {
 dependencies {
     api(project(":aquifer-core"))
     api(libs.kotlinx.coroutines.core)
+    // settle() takes TestScope as its receiver, so the coroutine test library is part of this
+    // module's public API surface, not an implementation detail.
+    api(libs.kotlinx.coroutines.test)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.kotlin.test.junit5)
-    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
     testRuntimeOnly(libs.junit.jupiter.engine)
     testRuntimeOnly(libs.junit.platform.launcher)

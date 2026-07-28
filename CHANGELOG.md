@@ -7,6 +7,18 @@ versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Changed — `settle()` drains the scheduler instead of yielding eight times
+
+- **Breaking (pre-release):** `aquifer-test`'s `settle()` is now an extension on
+  `kotlinx.coroutines.test.TestScope`, implemented as `runCurrent()`, and no longer suspends. It
+  drains every task scheduled at the current virtual time — including follow-ups those tasks
+  schedule — where the old `repeat(8) { yield() }` stopped after a fixed hop count, so a negative
+  assertion ("no fetch happened") could pass vacuously the day the work it polices needed a ninth
+  hop. Call sites inside `runTest` compile unchanged; `kotlinx-coroutines-test` joins
+  `aquifer-test`'s `api` dependencies, since the receiver type is part of its public API. As
+  before, `settle()` does not advance virtual time — work gated on a delay still needs
+  `advanceUntilIdle()`/`advanceTimeBy(...)`.
+
 ### Added — memory-pressure shedding
 
 - `Aquifer.evictMemory()` and `Aquifer.trimToSize(maxEntries)` shed the in-memory tier for wiring a
