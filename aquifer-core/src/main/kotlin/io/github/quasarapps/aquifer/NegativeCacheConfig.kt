@@ -15,6 +15,7 @@ import kotlin.time.Duration.Companion.seconds
  *         timeToLive = 30.seconds       // remember failures this long
  *         backoffMultiplier = 2.0       // consecutive failures stretch the window
  *         maxTimeToLive = 5.minutes     // never longer than this
+ *         maxEntries = 512              // bound the failure memory (LRU); default 512
  *     }
  * }
  * ```
@@ -36,9 +37,11 @@ import kotlin.time.Duration.Companion.seconds
  * does not reset the streak, so a chronically failing key keeps its stretched window even
  * between spaced-out probes.
  *
- * Memory footprint: one small record per failing key, removed on success or on mutation of
- * the key. A key that fails once and never succeeds again keeps its record (the same
- * unbounded-growth class as tracked issue #13).
+ * Memory footprint: one small record per failing key — no cached value, just the failure and
+ * its window — removed on that key's success or mutation. A key that fails once and never
+ * succeeds again keeps its record until it is evicted, because the memory is LRU-bounded by
+ * [maxEntries] (default 512): beyond that cap a new failure evicts the least-recently-consulted
+ * record, so the failure memory cannot grow without limit.
  */
 @AquiferDsl
 public class NegativeCacheConfig internal constructor() {

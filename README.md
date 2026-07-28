@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/QuasarApps/aquifer/actions/workflows/ci.yml/badge.svg)](https://github.com/QuasarApps/aquifer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Kotlin](https://img.shields.io/badge/kotlin-2.2-7F52FF.svg?logo=kotlin)](https://kotlinlang.org)
+[![Kotlin](https://img.shields.io/badge/kotlin-2.4-7F52FF.svg?logo=kotlin)](https://kotlinlang.org)
 
 **An offline-first, stale-while-revalidate data layer for Kotlin and Android.**
 
@@ -48,6 +48,7 @@ if (state.isLoading) RefreshIndicator()
 >     implementation("io.github.quasarapps:aquifer-persistence-file:0.1.0") // disk persistence
 >     implementation("io.github.quasarapps:aquifer-persistence-sqldelight:0.1.0") // queryable persistence
 >     implementation("io.github.quasarapps:aquifer-okhttp:0.1.0")            // ETag/304 revalidation
+>     testImplementation("io.github.quasarapps:aquifer-test:0.1.0")          // fakeAquifer, FakeClock, settle()
 > }
 > ```
 
@@ -78,6 +79,52 @@ persistence and Android-specific integrations layer on top as separate modules. 
 `aquifer-persistence-file` module is built on `java.nio.file` and needs API 26+ or NIO
 core-library desugaring.
 
+### How it compares
+
+[Store5](https://github.com/MobileNativeFoundation/Store) is the closest neighbour in Kotlin;
+TanStack Query and RTK Query are the web patterns most Android teams are borrowing from. What
+Aquifer does differently is narrow and specific:
+
+- **Epoch fencing.** Every `put`/`invalidate` bumps a per-key epoch, and every fetch captures its
+  epoch *before* it registers, so a response that was already in flight cannot resurrect a value
+  you just deleted or edited — it is discarded at commit time instead of racing the mutation.
+- **Absence is a state.** `DataState.Empty` is an affirmative "nothing here", distinct from
+  loading and from failure, so a `CacheOnly` screen observes a logout-style reset instead of
+  rendering deleted data forever.
+- **Conditional fetching that survives restarts.** Validators (`ETag`/`Last-Modified`) and a
+  server-declared `freshFor` are stored next to the value in the `SourceOfTruth`, so a cold start
+  revalidates with a 304 rather than re-downloading.
+- **A first-class fake.** `fakeAquifer` is public API in `aquifer-test` — a programmable store with
+  assertable fetch counts — not a test-source copy each consumer rewrites.
+
+And the honest losses: Aquifer is **JVM/Android only**, so a data layer shared with iOS is a real
+reason to choose Store5 today; it has **no mutation queue** (Store5's
+`MutableStore`/`Updater`/`Bookkeeper`, TanStack/RTK's optimistic update with rollback have no
+counterpart here yet); and it is **unreleased** — the API is locked by binary-compatibility
+validation, but nothing has been published, so none of it has been proven against a real dependent.
+
+## What Aquifer is not
+
+**Read-side only.** `put` is a *local write*, not a pending mutation: there is no rollback, no
+retry queue, and no conflict hook. A written value is authoritative until it goes stale, after
+which the first successful, unfenced fetch overwrites it. "Stale" is the *effective* horizon, which
+can arrive sooner than the configured `timeToLive`: a tighter per-call `maxAge` wins over it, and
+`ttlJitter` shortens it (a local write has no server `freshFor` to consult). The always-fetch
+strategies (`NetworkFirst`, `NetworkOnly`, `fresh(key)`) do not wait for any of that, so any of them
+replaces the write immediately. That overwrite is observable only as an ordinary fetch — a new
+`DataState.Content` and `onFetchSucceeded` — with nothing to say it replaced a local write, and the
+write clears the entry's stored validator, so that fetch goes out unconditional. **An offline edit form built
+on `put` alone will lose the user's edit once the entry goes stale and the next fetch lands.**
+Keep your own outbox until the planned [`aquifer-mutations`](ROADMAP.md) module lands; `put` is
+for applying a *confirmed* change (a server push, a response you already have) to the cache.
+
+**Not Kotlin Multiplatform today.** JVM and Android only. KMP is a post-1.0 bet on the
+[roadmap](ROADMAP.md) — teams sharing a data layer with iOS should look at Store5.
+
+**Declared non-goals**, so the scope stays honest: image/blob caching (use Coil), cross-process
+shared caches, full sync engines/CRDTs, GraphQL response normalization, reflection-based
+serialization, and a Java-first API surface.
+
 ## Core concepts
 
 ### One Aquifer per data family
@@ -98,6 +145,31 @@ servable, but due for revalidation:
 | `StaleWhileRevalidate` *(default for `stream`)* | cache | cache, then revalidate | fetch |
 | `NetworkFirst` | fetch → cache on failure | fetch → stale on failure | fetch |
 | `NetworkOnly` | fetch | fetch | fetch |
+
+> **`timeToLive` defaults to `Duration.INFINITE` — set one.** Staleness is decided by the first
+> horizon that applies: a per-call `maxAge`, else the entry's server-declared `freshFor`, else this
+> TTL. So with no `freshness { timeToLive = … }` block, any entry carrying *neither* override never
+> becomes stale, and for those entries every strategy above collapses onto its *fresh entry* column:
+> `CacheFirst` serves the first fetch forever, `StaleWhileRevalidate` never revalidates,
+> `revalidateActive()` (and with it `revalidateOnReconnect`/`revalidateOnAppForeground`) refreshes
+> only the active keys with nothing cached — a first fetch that failed while offline retries on the
+> next trigger, unless negative caching is configured and still suppressing that key, in which case
+> the sweep skips it until the window elapses — and `isStale` is permanently `false`. What still
+> reaches the network: a cache miss, `NetworkFirst`/`NetworkOnly`, `fresh(key)`, and — under any
+> strategy that fetches at all, so not `CacheOnly` — an entry whose per-call `maxAge` or
+> server-declared `freshFor` has elapsed. A live negative-cache suppression window still holds all
+> of those back except `NetworkOnly`/`fresh(key)`. Give any store whose data can change upstream a
+> `timeToLive`.
+
+Two multi-key divergences are worth knowing before you reach for them. `getAll` is one-shot and
+awaits every fetch it triggers, so `StaleWhileRevalidate` there behaves like `CacheFirst` — it
+blocks on the network rather than serving stale; use `streamMany` when you want
+stale-while-revalidate across many keys. And `maxAge` is a `get`/`stream` knob only:
+`getAll`/`streamMany`/`prefetch`/`prefetchAll` take `freshness` alone, judging staleness against
+each entry's server-declared `freshFor` when it has one and the store's TTL otherwise.
+`revalidateActive()` judges keys the same way, so a stream collecting under a tighter `maxAge` does
+not make the reconnect sweep refresh it — an elapsed server `freshFor` or a finite store TTL is what
+does.
 
 ### Streams keep every observer coherent
 
@@ -121,9 +193,15 @@ suspend fun onPullToRefresh(id: UserId) {
 }
 
 suspend fun onUserEdited(id: UserId, edited: User) {
-    users.put(id, edited)  // optimistic local write; observers update instantly
+    users.put(id, edited)  // local write of an already-confirmed change; observers update instantly
 }
 ```
+
+`put` writes to the cache and nothing else — it is not an optimistic mutation, and the next
+successful fetch overwrites it without ceremony (once it goes stale under the staleness-aware
+strategies — which a per-call `maxAge` or `ttlJitter` can bring forward — and immediately under
+`NetworkFirst`/`NetworkOnly`/`fresh`). See
+[What Aquifer is not](#what-aquifer-is-not) before building an offline edit form on it.
 
 ### One-shot reads
 
@@ -538,30 +616,77 @@ staleness, single-flight, or shed-around-stream behavior, test against the real 
 - **Slow collectors are isolated.** Every stream drains the store's update bus through an
   unbounded per-collector buffer on the store's dispatcher, so one stalled screen can never
   block fetch completion, writes, or other streams.
+- **Fencing records are per-key and long-lived.** Each fenced key keeps a small epoch record (a
+  key and a `Long`, no value) until `invalidateAll()` clears the set, so a very wide key space on
+  a long-lived process — a search or autocomplete store — grows a modest per-key map. Bounding it
+  soundly needs an atomic capture across the whole read path, not just the fetch site; until then
+  `invalidateAll()` is the mitigation. Tracked as
+  [#13](https://github.com/QuasarApps/aquifer/issues/13).
+
+## Contracts
+
+### Exceptions
+
+| Thrown | When |
+|---|---|
+| `CacheMissException` | `get(key, Freshness.CacheOnly)` with nothing cached. `CacheOnly` *streams* emit `DataState.Empty` instead. |
+| `BatchKeyMissingException` | a `batchFetcher` returned a map omitting a requested key. It fails that key alone — the rest of the batch is unaffected. |
+| `HttpException` *(aquifer-okhttp)* | an unsuccessful response — neither 2xx nor 304 for `okHttpConditionalFetcher`, any non-2xx for the plain `okHttpFetcher`. Carries `code`/`url` and extends `IOException`, so it flows through `retryOn` and `negativeCache` like any transport failure. |
+| `AquiferException` | the base type of `CacheMissException` and `BatchKeyMissingException` (not `HttpException`), and thrown directly to callers awaiting a fetch when the store closes underneath them (never a bare cancellation of the caller's own coroutine). |
+
+Your fetcher's own exceptions are never wrapped: they arrive in `DataState.Failure.error`
+unchanged, which is what makes `retryOn = { it is IOException }` work and lets a `DataState.Failure`
+consumer discriminate on the concrete type. Whether `get` *throws* one depends on stale-if-error:
+`CacheFirst` and `NetworkFirst` return the cached value when a fetch fails and one is available,
+and only rethrow when there is nothing to fall back on; `NetworkOnly`/`fresh` always rethrow.
+
+### Lifecycle
+
+`close()` cancels in-flight fetches and stops update delivery; cancelling the scope passed to
+`scope(...)` does the same, and closing twice is a no-op. Afterwards most members throw
+`IllegalStateException`, while the non-suspending memory-only operations — `snapshot()`,
+`stats()`, `evictMemory()`, `trimToSize(n)` — stay callable. Streams already collecting simply
+stop receiving: they neither complete nor throw, so end them by cancelling the scope that
+collects them (`viewModelScope`, `backgroundScope`) rather than waiting on the flow.
+
+### Threading
+
+Fetches and fire-and-forget work (`prefetch`, background revalidation) run under the store's own
+`SupervisorJob`, on `Dispatchers.Default` unless you inject a `scope` — so **fetchers execute on the
+CPU-sized pool**. Your `SourceOfTruth` is called from both sides: a direct read or write
+(`get`'s hydration, `put`, `invalidate`) runs on the *caller's* coroutine, while a conditional
+fetch's prior read and every post-fetch write-through run on the store's scope. So a blocking
+persistence implementation must dispatch itself — it cannot rely on Aquifer to move it, and on the
+direct paths it blocks the caller. A suspending, non-blocking fetcher needs nothing;
+a blocking one (`Call.execute()`, JDBC, file reads) must be wrapped, or it will starve the
+default dispatcher under load:
+
+```kotlin
+fetcher { id -> withContext(Dispatchers.IO) { blockingApi.load(id) } }   // or scope(ioScope)
+```
+
+`snapshot()`, `stats()`, `evictMemory()`, and `trimToSize(n)` are non-suspending and I/O-free,
+callable from any thread including the main one.
 
 ## Try it
 
 ```bash
-./gradlew :sample:run    # runnable tour: SWR, dedup, local edits, process death, reconnect
+./gradlew :sample:run    # five scenarios: cold start, SWR, local write, process death, reconnect
 ./gradlew dokkaGenerate  # aggregated API docs in build/dokka/
 ./gradlew build          # tests + binary-compatibility check (api/*.api dumps)
 ```
 
 ## Roadmap
 
-Everything from the original plan has shipped: the core engine, persistence, retries,
-reconnect/foreground revalidation, the Android module, release engineering, and two
-review-driven hardening rounds. What's next, in order:
-
-1. **v0.1.0 on Maven Central** — pipeline is ready; needs secrets + a tag.
-2. **Network efficiency** — conditional fetching (ETag/304), negative caching, prefetch,
-   batched fetching (0.2 — Compose, detekt, per-call freshness, the bounded disk store, and
-   `DataState.Empty` — has fully shipped).
-3. **Persistence expansion** — the bulk + enumeration SPI and the SQLDelight adapter (queryable,
-   enumerable) have shipped; the DataStore adapter is next.
-
-The full plan through 1.0 and beyond — persistence adapters, Lincheck-verified concurrency,
-KMP, offline mutations — lives in [ROADMAP.md](ROADMAP.md).
+[ROADMAP.md](ROADMAP.md) is the single ordering of record — what has shipped, what is next
+through 1.0 and beyond (KMP, offline mutations, a Paging bridge), and the declared non-goals.
+Everything before the first tag sits in its **Now** milestone; the headline is **v0.1.0 on Maven
+Central**, which needs three blockers cleared — a fix to the release version gate (it checks five of
+the seven modules configured for publication), a dated changelog section in place of the
+`[Unreleased]` work log, and `aquifer-test`'s `settle()` corrected to `runCurrent()` while its
+signature is still free to change — plus the owner-side signing secrets and the version bumped off
+`-SNAPSHOT`. See the roadmap for the rest and for their order — this section deliberately does not
+restate it.
 
 ## Project layout
 
@@ -573,7 +698,8 @@ KMP, offline mutations — lives in [ROADMAP.md](ROADMAP.md).
 | `aquifer-persistence-file` | JSON-files `SourceOfTruth` backed by kotlinx.serialization: atomic writes, self-healing reads. |
 | `aquifer-persistence-sqldelight` | SQLDelight `SourceOfTruth`: queryable, batched (`IN`-clause + transactions), and enumerable (disk-wide `invalidateWhere`). |
 | `aquifer-okhttp` | OkHttp conditional fetching: automatic `ETag`/`Last-Modified` revalidation, 304 → `NotModified`. |
-| `sample` | Runnable CLI walkthrough of every feature (`./gradlew :sample:run`). |
+| `aquifer-test` | Test doubles for consumers (`testImplementation`): `fakeAquifer` with assertable fetch counts, `FakeClock`, `settle()`. |
+| `sample` | Runnable CLI tour of five scenarios — cold start, stale-while-revalidate, local `put`, process death, reconnect (`./gradlew :sample:run`). |
 
 ## License
 

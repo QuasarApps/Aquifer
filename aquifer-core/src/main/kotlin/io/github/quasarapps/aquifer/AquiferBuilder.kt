@@ -217,8 +217,11 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      * parented to [scope]'s job: cancelling [scope] closes the store, while [Aquifer.close]
      * leaves [scope] untouched.
      *
-     * The default internal scope uses `Dispatchers.Default`. In tests, pass the test
-     * framework's scope to make background work deterministic.
+     * The default internal scope uses `Dispatchers.Default`, so fetches run on a CPU-sized pool:
+     * a fetcher that blocks its thread (synchronous HTTP, JDBC, file I/O) starves that pool and
+     * can stall unrelated work. Wrap such a fetcher in `withContext(Dispatchers.IO) { … }`, or
+     * pass a scope carrying an I/O dispatcher here. In tests, pass the test framework's scope to
+     * make background work deterministic.
      */
     public fun scope(scope: CoroutineScope) {
         this.scope = scope
@@ -301,8 +304,29 @@ public class FreshnessConfig internal constructor() {
     /**
      * How long a cached entry is considered fresh, measured from the moment it was fetched or
      * written. Once older, the entry is *stale*: still servable, but [Freshness] strategies
-     * treat it as needing revalidation. Must be positive. Defaults to [Duration.INFINITE]
-     * (entries never go stale).
+     * treat it as needing revalidation. Must be positive. Defaults to [Duration.INFINITE], under
+     * which an entry goes stale only when some *other* horizon applies to it — see below.
+     *
+     * Staleness is decided by the first horizon that applies: a per-call `maxAge`, else the entry's
+     * server-declared [FetchResult.Fresh.freshFor], else this TTL. So the default is "cache until
+     * told otherwise" for every entry carrying *neither* override, and for those entries it
+     * switches off each staleness-driven refresh: [Freshness.CacheFirst] serves a cached entry
+     * forever and fetches only on a miss, [Freshness.StaleWhileRevalidate] never revalidates in the
+     * background, [Aquifer.revalidateActive] and [Aquifer.revalidateOn] refresh only the active keys
+     * with nothing cached, and [DataState.Content.isStale] stays `false`. Set a finite value here for
+     * all of that to happen again. A per-call `maxAge` on [Aquifer.stream]/[Aquifer.get] is the
+     * narrower lever: it restores staleness for those reads alone, because [Aquifer.revalidateActive]
+     * and [Aquifer.revalidateOn] ignore it and judge every key by the server horizon or this TTL. An
+     * entry whose server horizon has elapsed goes stale regardless of this TTL, and refetches
+     * wherever the strategy fetches at all — [Freshness.CacheOnly] reports it as stale and still
+     * never goes to the network. The explicit demands ([Freshness.NetworkFirst],
+     * [Freshness.NetworkOnly], [Aquifer.fresh]) skip the staleness question entirely. None of these
+     * outrank negative caching: a live suppression window holds back every one of them *except*
+     * [Freshness.NetworkOnly] and [Aquifer.fresh], which are the explicit-demand carve-out.
+     * [Aquifer.invalidate] fetches too, indirectly: every fetch-capable stream
+     * collecting that key refetches as soon as it observes the drop, so an invalidation with an
+     * active collector hits the network immediately; with no collector it only makes the next read
+     * a miss.
      */
     public var timeToLive: Duration = Duration.INFINITE
         set(value) {

@@ -7,8 +7,10 @@ public open class AquiferException(
 ) : RuntimeException(message, cause)
 
 /**
- * Thrown by [Aquifer.get] with [Freshness.CacheOnly] — and carried by [DataState.Failure] on
- * [Freshness.CacheOnly] streams — when no value is cached for the requested key.
+ * Thrown by [Aquifer.get] with [Freshness.CacheOnly] when no value is cached for the requested
+ * key. Streams never carry it: a [Freshness.CacheOnly] stream with nothing cached emits
+ * [DataState.Empty] — an affirmative "nothing cached, and nothing will fetch" — rather than
+ * [DataState.Failure].
  */
 public class CacheMissException(key: Any) : AquiferException("No cached value for key '$key'")
 

@@ -112,6 +112,49 @@ most-recently-used entry is never LRU-evicted, so neither could occur before):
   acquisition. Together with #53's write/delete batching, these complete the two bulk SPI
   capabilities the queryable persistence adapters need.
 
+### Added — HTTP fetcher seams and server-declared freshness
+
+- **`HttpException(code, url)`** (`aquifer-okhttp`): a response that is neither a success nor a
+  `304` now fails with a typed error carrying the status, instead of a bare `IOException` whose code
+  was only recoverable by parsing its message string. It still *is* an `IOException`, so with no
+  extra configuration it flows through the normal fetch-failure path (retry policy,
+  `DataState.Failure`, stale-if-error) exactly as before. What changes is that a resilience policy
+  can branch on the status: `retryOn = { it is HttpException && it.code >= 500 }` retries server
+  errors only and lets a `404` fail fast instead of burning every attempt. A `404` stays a fetch
+  *failure* either way — it is surfaced as `DataState.Failure`, never translated into a cache miss
+  or `DataState.Empty` — and any code reading that failure can discriminate the same way.
+- **`okHttpFetcher(callFactory, request, parse)`**: the plain (non-conditional) counterpart of
+  `okHttpConditionalFetcher`, for backends that don't speak `ETag`/`Last-Modified` and so have
+  nothing to revalidate against. A 2xx body goes to `parse`; any other status throws
+  `HttpException`. Like the conditional fetcher it cancels the call when the fetch's coroutine is
+  cancelled and always closes the response body.
+- **`Call.await()` is now public**: the suspend bridge both OkHttp fetchers already used internally
+  — enqueue on OkHttp's dispatcher (never blocking the caller's thread), cancel the call when the
+  awaiting coroutine is cancelled, and close a response that races in after cancellation so the
+  connection isn't leaked. Exposed so a hand-rolled fetcher can await a `Call` without
+  re-implementing that plumbing; the caller owns the returned `Response` and must close it.
+
+**Server-declared freshness** — the origin, not just the store, can now say how long a value lives:
+
+- `FetchResult.Fresh` gains `freshFor: Duration?`: a per-entry lifetime declared by the fetch. It is
+  persisted as the new `PersistedEntry.serverFreshForMillis` (a `Long` for on-disk format stability;
+  both the JSON file and SQLDelight stores write it, so the horizon survives process death) and is
+  carried forward across a `FetchResult.NotModified` — a 304 re-ages the entry off the new write
+  time while keeping the lifetime the origin last declared. Freshness precedence is per-call
+  `maxAge` > server `freshFor` > builder `timeToLive`, and server freshness is **never** jittered:
+  `ttlJitter` shapes only the store's own default, whose point is to spread expiries the store
+  itself invented. `Duration.ZERO` declares the value immediately stale on the next read; `null`
+  — the default, and what every existing fetcher returns — reduces to the previous behavior,
+  on-disk bytes included.
+- `okHttpConditionalFetcher(…, respectCacheControl = true)` (default `false`, so existing call sites
+  are untouched) derives that lifetime from a 2xx response's cache headers: `max-age` minus any
+  `Age`, `no-store`/`no-cache`/`max-age=0` as `Duration.ZERO`, and `Expires` measured against `Date`
+  as a fallback when no `max-age` directive is present. Every result is floored at zero; a header the
+  parser cannot use is absorbed rather than failing the fetch — an unparseable `Age` counts as zero
+  and an unparseable `Date` falls back to the response's receipt time, while a missing or unusable
+  `Expires` (with no `max-age`) leaves no opinion (`null`) — and shared-proxy directives
+  (`s-maxage`, `private`, …) are ignored — this is a private cache.
+
 ### Added — encryption at rest (JsonFileSourceOfTruth)
 
 - `JsonFileSourceOfTruth` gains a `cipher: ValueCipher?` parameter (also on the

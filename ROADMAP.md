@@ -5,11 +5,13 @@ library you reach for when "show cached data instantly, refresh intelligently, s
 process death, never resurrect deleted data" must actually be true, with every guarantee
 tested and every trade-off written down.
 
-**How to read this:** milestones are sorted by importance; items within a milestone are
-sorted by leverage (impact ÷ effort). Effort: **S** ≈ a day, **M** ≈ a few days, **L** ≈ a
-week+, **XL** ≈ multiple weeks. Checked boxes are shipped. Numbers like
-[#12](https://github.com/QuasarApps/aquifer/issues/12) are tracked issues; the primary RFC/issue
-citations are linked explicitly for one-click navigation (most other `#N` references remain bare).
+**How to read this:** milestones are sorted by importance. *Within* a milestone, **open items come
+first, ordered by leverage (impact ÷ effort); shipped items follow in the order they shipped**,
+kept as a record rather than re-sorted. Effort: **S** ≈ a day, **M** ≈ a few days, **L** ≈ a
+week+, **XL** ≈ multiple weeks. Checked boxes are shipped. A `#N` reference is a GitHub item in
+[QuasarApps/aquifer](https://github.com/QuasarApps/aquifer) — an **issue or a pull request**, and
+mostly a pull request; the tracked issues are #12, #13, #23 and #29. GitHub redirects
+`/issues/N` to `/pull/N` when the number is a PR, so the linked citations resolve either way.
 
 ---
 
@@ -17,21 +19,75 @@ citations are linked explicitly for one-click navigation (most other `#N` refere
 
 Everything else compounds once there's a public artifact.
 
+**Where this project actually stands:** roughly six weeks of work, 36 shipped roadmap items, and
+a locked public API of 55 types and 284 non-synthetic members across seven
+`*.api` dumps — with **zero published artifacts**. Nobody has ever typed
+`implementation("io.github.quasarapps:…")` against this library, hit a POM problem, or argued
+with a default. Every API decision so far — including the ones about to be frozen at 1.0 — was
+made against imagined users, which makes the freeze docket below guesswork until real ones exist.
+Shipping 0.1.0 is the highest-leverage remaining action on this file, and the first three items
+are what stand between here and the tag.
+
+- [ ] **Fix the release version gate** — `release.yml` verifies the tag against five modules
+  (`aquifer-core`, `aquifer-persistence-file`, `aquifer-android`, `aquifer-compose`,
+  `aquifer-okhttp`), but **seven** declare `publishToMavenCentral()`: `aquifer-test` and
+  `aquifer-persistence-sqldelight` are published by `publishAndReleaseToMavenCentral` while going
+  unchecked, so either can ship at a version the tag never claimed. Derive the module list from the
+  publishing modules instead of hardcoding it, and hoist the seven copies of
+  `version = "0.1.0-SNAPSHOT"` into a single root property so a release bump is one edit that
+  cannot drift. A release **blocker**, not owner action. *(S)*
+- [ ] **Collapse `[Unreleased]` into a dated `0.1.0` section** — the changelog carries 27
+  separate `### Added` blocks under one `[Unreleased]` heading: a per-PR work log rather than
+  release notes, and self-contradictory when read as a whole (the oldest entry, at the bottom,
+  describes `DataState` as `Loading`/`Content`/`Failure`, while a newer one above it adds `Empty`).
+  Rewrite it as one dated `0.1.0` section grouped Added/Changed/Fixed, describing the surface as it
+  actually ships rather than the deltas that got there — and drop the pre-release `Fixed` entries
+  for races no published version ever had. The #48–#51 backfill is done; the collapse is what
+  remains. The tag's release notes are cut from this section, so it is a blocker too. *(S)*
+- [ ] **Replace `aquifer-test`'s `settle()` with `runCurrent()`** — `aquifer-test` exposes
+  `settle()` as locked public API, implemented as `repeat(8) { yield() }`: a fixed hop count
+  standing in for "the scheduler is quiet". Roughly 40 *negative* assertions in the core suite
+  (assert that no fetch happened) pass vacuously if the work they mean to catch needs a ninth hop,
+  and consuming apps are about to inherit the same trap. `runCurrent()` drains everything
+  currently scheduled and is already used 27 times in-repo. It needs the `TestScope` receiver, so
+  this is a signature change — free before the tag, a breaking change for consumers once it is
+  published. *(S)*
 - [ ] **Publish v0.1.0 to Maven Central** — add the four secrets from
-  [CONTRIBUTING](CONTRIBUTING.md), bump versions off `-SNAPSHOT`, date the CHANGELOG, push
-  `v0.1.0`; the guarded release workflow does the rest. *(owner action — S)*
+  [CONTRIBUTING](CONTRIBUTING.md), bump the (newly single) version off `-SNAPSHOT`, date the
+  CHANGELOG, push `v0.1.0`; the guarded release workflow does the rest. *(owner action — S)*
+- [ ] **Cut a GitHub Release from the tagged CHANGELOG** — the release workflow ends at
+  `publishAndReleaseToMavenCentral`, so a `v*` tag produces artifacts and nothing a watcher can
+  see: no release entry, no notes, no diff link. Generate the release in the same job from the
+  tagged CHANGELOG section. Pulled forward from 1.0 — it costs a step and it is the only
+  announcement channel the project has. *(S)*
+- [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
+  published coordinates from a clean project, and confirm the snippet still lists all seven
+  published modules. *(S)*
+- [ ] **"Coming from Store5" migration guide** — pulled forward from 1.0, and the highest-leverage
+  adoption asset on this file: the README now names Store5 and states the trade honestly, but
+  offers no *mapping*, so the most likely switcher still has nothing to migrate against. The
+  mapping is already understood (`Fetcher`→`fetcher`,
+  `SourceOfTruth`→`SourceOfTruth`, `StoreRequest`→`Freshness`, `Store.stream`→`stream`,
+  `StoreReadResponse`→`DataState`), and the honest differences are short: no
+  `MutableStore`/`Updater` yet, JVM/Android only, epoch fencing instead of bookkeeping. An
+  afternoon of writing, not the M-sized guide set it was filed as. *(S)*
+- [ ] **SECURITY.md + issue/PR templates** — pulled forward from 1.0: the *first* release ships an
+  encryption-at-rest hook, and there is no private disclosure path, so a report on it arrives as a
+  public issue. Not a 1.0 nicety when 0.1.0 is the artifact that ships the feature. *(S)*
+- [ ] **Sample Android app, built against the published artifacts** — a small Compose app demoing
+  airplane-mode survival, pull-to-refresh coherence, and reconnect revalidation on a device. Moved
+  up from 0.5 to sit immediately after the tag, and resolved from Maven Central rather than an
+  `includeBuild`, so it doubles as the project's first real consumer: it validates the POMs, the
+  coordinates, the install snippet and the Android packaging in one pass. Scoped down from L to
+  M — a device demo, not a showcase app. *(M)*
 - [ ] **Repo hygiene** *(owner action — S)* — branching model is settled: `develop` is the
   integration branch that every PR targets, and `main` is release-only (releases are cut by
   pushing a `v*` tag). Remaining owner action: set `develop` as the GitHub default branch so
   PRs and Dependabot target it by default, keeping `main` protected. The earlier Dependabot
-  toolchain bumps (#7–#11, #19, #20) and the #44/#45 follow-ups are all resolved.
-- [ ] **Maven Central badge + install snippet verification** after the first release. *(S)*
-- [x] **JDK 11/17/21 CI matrix** (shipped — #46) — CI ran only Temurin 21, but every
-  module compiles to JVM-11 bytecode and CONTRIBUTING promises JDK-17 builds; neither is
-  actually tested, so a newer-API slip or 11-incompatible bytecode could ship undetected. A
-  cheap matrix turns two stated-but-unverified compatibility claims into tested guarantees
-  before the first artifact reaches users on older toolchains and before the 1.0 bytecode
-  contract locks. *(S)*
+  toolchain bumps (#7–#11, #19, #20) and the #44/#45 follow-ups are all resolved. One line here is
+  *not* owner action: `ci.yml` triggers on `push: branches: [main]` plus `pull_request`, so a
+  merge landing on `develop` — the branch every PR targets — runs no CI at all; add `develop` to
+  the push branches.
 - [x] **Fence fetches at registration (correctness fix, shipped — #42)** — `refreshWith`
   captured the fetch's epoch in the lazily-started body, which runs *after* `inFlight.putIfAbsent`;
   a `put`/`invalidate` in that gap bumped the epoch but the fetch then read the *post-bump* epoch,
@@ -39,11 +95,27 @@ Everything else compounds once there's a public artifact.
   of a user's write in the headline "never resurrect deleted/edited data" guarantee. Fixed by
   capturing the epoch before `scope.async` (it only ever fails safe), with a deterministic
   register-then-fence interleaving test `MutationFencingTest` didn't cover. *(S)*
+- [x] **JDK 17/21 build matrix + JVM-11 runtime check** (shipped — #46) — CI ran only Temurin
+  21, while every module compiles to JVM-11 bytecode and CONTRIBUTING promises JDK-17 builds;
+  neither was tested, so a newer-API slip or 11-incompatible bytecode could ship undetected.
+  Shipped as a `build` matrix over JDK **17 and 21** — not 11, which the Gradle 9 wrapper cannot
+  run on — plus a separate `jvm11-runtime` job that installs 11 alongside 21 and uses 11 only as
+  the *Test* task launcher. That job covers four modules: `aquifer-core`, `aquifer-test`,
+  `aquifer-persistence-file`, `aquifer-okhttp`. **`aquifer-persistence-sqldelight` is excluded**,
+  and the two Android modules run under Robolectric on the host JDK, so "runs on a JDK 11
+  runtime" is verified for four of the seven modules configured for publication, not all seven. *(S)*
 
 ## 0.2 — Compose & everyday ergonomics
 
 What every consuming app touches daily; highest user-facing leverage.
 
+- [ ] **Widen the CLI sample past its first five scenarios** — `sample/…/Main.kt` covers cold
+  start, SWR, `put`, "process death" and reconnect-with-retry. It uses no
+  batching, no `getAll`/`streamMany`, no `prefetch`, no conditional fetching, no negative caching,
+  no `stats`/`snapshot`, no encryption or migration — and nothing that demonstrates single-flight
+  dedup. CI runs `:sample:run` once per workflow
+  (gated on the JDK-21 matrix leg), so each scenario added is also a free end-to-end smoke test of
+  a headline path. *(S)*
 - [x] **`aquifer-compose` module** — `Aquifer.collectAsState(key)` built on
   `collectAsStateWithLifecycle`, a `rememberStream` helper, and a `previewAquifer` fake for
   `@Preview`s; behavior-tested with molecule (no UI-test infrastructure). *(M)*
@@ -56,7 +128,9 @@ What every consuming app touches daily; highest user-facing leverage.
   one orthogonal knob composes with every strategy instead of multiplying sealed variants,
   and the data objects stay simple defaults. Fetch decisions change only for the
   staleness-aware strategies; a stream's `isStale` flags follow the caller's bar under
-  every strategy, and `Duration.INFINITE` means "serve anything cached". *(M)*
+  every strategy, and `Duration.INFINITE` means "serve anything cached". (The multi-key entry
+  points did *not* get the knob — see the 1.0 freeze docket, where that asymmetry becomes
+  permanent.) *(M)*
 - [x] **Bounded disk store** — `maxEntries`/`maxBytes` LRU eviction on
   `JsonFileSourceOfTruth` plus orphaned-temp-file GC on first use. Shipped with an
   in-memory access-ordered index (exact within a process) seeded from file mtimes across
@@ -80,6 +154,41 @@ What every consuming app touches daily; highest user-facing leverage.
 
 Make the fetch path cheap and stampede-proof under real-world conditions.
 
+- [ ] **Fix `revalidateActive()` — batch it, honor per-stream `maxAge`, add a force knob** — the
+  reconnect path walks `activeKeys` and does a per-key `load()` then `refresh()`. `load()` returns
+  from memory first, so the storage hit is per *non-resident* active key rather than per key — but
+  on the cold reconnect that matters (process resumed, memory shed) that is still N sequential
+  reads where one `readAll` would do. On the fetch side the sweep's per-key `refresh()` calls are
+  merged only by the single accumulator, which exists solely when a plain `batchFetcher` is paired
+  with a positive `coalesceWindow`; `fetcher`, `conditionalFetcher`, `conditionalBatchFetcher` and a
+  window-less `batchFetcher` all stay N calls, so the gap is every store without that window. It
+  also cannot see per-stream freshness — `activeKeys`
+  is a bare `ConcurrentHashMap<K, Int>` refcount — so a `stream(key, maxAge = 30.seconds)` is
+  revalidated against the store-wide TTL instead of the bar its caller asked for. And under the
+  **default** `timeToLive = Duration.INFINITE` an entry carrying no server-declared `freshFor` is
+  never expired, so a store built with no `freshness { }` block revalidates *only the active keys
+  with nothing cached, plus any whose server horizon has elapsed* on reconnect, while looking like
+  it refreshes everything on screen.
+  Batch the staleness check and the refresh through the bulk SPI, carry each registration's
+  `maxAge` alongside the refcount, and add an explicit "refresh every active key regardless of
+  staleness" escape hatch — pull-to-refresh has no way to express that today. *(M)*
+- [ ] **Decide what a local `put` does to the validator** — `put`/`putAll` write
+  `PersistedEntry(value, now)`, silently dropping the entry's `validator` and
+  `serverFreshForMillis`. So a locally written key loses its ETag and its next conditional fetch
+  goes out unconditional: a full-body download where a 304 was available, on precisely the keys an
+  app edits most. Dropping is *defensible* — a 304 against a stale validator would re-age a
+  locally modified value as though the server had confirmed it. The drop is now documented (in
+  `put`/`putAll`'s KDoc and the README's *What Aquifer is not*); what remains is the design call:
+  keep dropping it, or retain the validator behind a "locally modified" marker that suppresses the
+  re-age so an edited key can still take a 304. *(S)*
+- [ ] **[#12](https://github.com/QuasarApps/aquifer/issues/12) — benchmark, then stripe the commit guard** *(deferred)* — a JMH-style harness for
+  concurrent commit throughput against a real file store, then per-key lock striping only if the
+  numbers justify it (constraints documented in the issue). Deferred for two reasons: with zero
+  published artifacts there is no real workload to benchmark, so any harness written now encodes a
+  guess about contention nobody has reported; and the hydration-guard fix queued in 0.5 changes how
+  much traffic the commit lock actually sees, so a baseline taken today measures a shape that is
+  about to move. Revisit after 0.1.0 has users, or the first time someone reports commit
+  contention. *(M–L)*
 - [x] **Conditional fetching (ETag / Last-Modified)** — shipped as
   `conditionalFetcher { key, validator -> FetchResult }` with `Fresh(value, validator)` /
   `NotModified`: validators are stored next to the value (memory, `PersistedEntry`, the
@@ -144,32 +253,36 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   #51 wired `okHttpConditionalFetcher(respectCacheControl = true)` to parse `max-age` (minus
   `Age`), `no-store`/`no-cache`/`max-age=0` → immediately stale, and `Expires` as a fallback.
   Opt-in, so *the app declares how fresh data must be* stays the default stance. *(M)*
-- [ ] **[#12](https://github.com/QuasarApps/aquifer/issues/12) — benchmark, then stripe the commit guard** — JMH-style harness for concurrent
-  commit throughput against a real file store; implement per-key lock striping only if the
-  numbers justify it (constraints documented in the issue). *(M–L)*
 
 ## 0.4 — Persistence expansion
 
-Meet apps where their storage already is. The two SPI capabilities come first: both adapters'
+Meet apps where their storage already is. The two SPI capabilities came first: both adapters'
 whole point (native batched transactions, a disk-wide `invalidateWhere`) is inexpressible
-through today's single-key `SourceOfTruth`, so building the adapters first would either hardcode
+through a single-key `SourceOfTruth`, so building the adapters first would either hardcode
 N-round-trip behavior or force a contract break mid-milestone.
 
+- [ ] **Proto DataStore adapter** (`aquifer-persistence-datastore`) *(deferred)* — the two SPI
+  capabilities it was sequenced behind have both shipped, and the SQLDelight adapter already proves
+  out the queryable/enumerable case, so what remains is the shape Proto DataStore is *worst* at: it
+  keeps one protobuf blob per instance, so a keyed cache becomes a single map-valued message that
+  every single-key write rewrites and fsyncs whole — the opposite of the bounded, per-key LRU the
+  file store gives you — and it needs a generated `Serializer<T>` per value type, which neither
+  JSON-based store requires. Real cost, no capability the two existing adapters lack. Deferred
+  until someone asks with a concrete app; "it's the modern AndroidX default" is not a use
+  case. *(M)*
 - [x] **Bulk `SourceOfTruth` capability** (shipped — #53/#54/#55) — optional `readAll(keys)` / `writeAll(entries)` /
-  `deleteMany(keys)` on the SPI, defaulting to the current per-key loop. Today `getAll`,
-  `putAll`, and `invalidateWhere` do N storage round-trips (per-key `read`/`write`/`delete`),
-  and a queryable backend cannot express its native batched transaction or `IN` query through
+  `deleteMany(keys)` on the SPI, defaulting to the current per-key loop. Before it, `getAll`,
+  `putAll`, and `invalidateWhere` did N storage round-trips (per-key `read`/`write`/`delete`),
+  and a queryable backend could not express its native batched transaction or `IN` query through
   the four single-key methods. Default implementations keep the JSON file store and existing
   custom stores source-compatible, and make the already-shipped batch paths batch at the
   storage layer too. **Prerequisite for the adapters below.** *(M)*
 - [x] **Key-enumeration capability** (shipped) — an opt-in `keys()` / `keysWhere(...)` seam so a
-  queryable store backs a *disk-wide* `invalidateWhere` instead of today's in-process-keys-only
+  queryable store backs a *disk-wide* `invalidateWhere` instead of an in-process-keys-only
   predicate. Default returns `null` (opt out): the JSON file store opts out by design, as its
   filenames are one-way SHA-256 of the key, so enumeration would demand a separate key→hash
   manifest with its own crash-consistency story — exactly what the LRU index deliberately avoids.
-  **Shapes the adapters below.** *(L)*
-- [ ] **Proto DataStore adapter** (`aquifer-persistence-datastore`) — the modern AndroidX
-  default; builds on the bulk + enumeration capabilities above. *(M)*
+  **Shaped the adapters below, and unblocked tag/group invalidation in 0.6.** *(L)*
 - [x] **SQLDelight adapter** (shipped) — `aquifer-persistence-sqldelight`: queryable persistence
   whose enumerability backs a correct disk-wide `invalidateWhere`, and the natural stepping stone
   to multiplatform. Values as JSON, keys via a bidirectional codec; bulk via `IN`-clause +
@@ -192,24 +305,64 @@ N-round-trip behavior or force a contract break mid-milestone.
 
 The engine's guarantees deserve machine-checked evidence.
 
-- [x] **Lincheck concurrency tests** (data structures shipped; fencing scoped out — see below) —
-  model-check the engine's invariants instead of relying on hand-written interleavings. Lincheck 2.39
-  on a JDK-21 runner, isolated in a dedicated `lincheckTest` task + CI job so slow model-checking stays
-  out of `check`/`build`. **Shipped:** linearizability of `MemoryCache`, the negative cache's
-  `BoundedLruMap`, the real engine's fetch-free mutation region
-  (`put`/`invalidate`/`invalidateAll`/`get(CacheOnly)` under `commitGuard`, doubling as the canary that
-  `suspend` `@Operation`s + a coroutine `Mutex` are Lincheck-schedulable), and — after extracting the
-  epoch/registry primitives from `RealAquifer` (extraction-with-delegation, so the checked code *is* the
-  production code) — the `SingleFlightRegistry` fetch-dedup registry.
-  **Scoped out (the erstwhile "flagship #42" part):** epoch fencing is a **real-time (happens-before)
-  property, not a linearizability one** — a fetch's commit must take effect as of its *start* (before a
-  racing `put`), which linearizability never forces: it may reorder the overlapping commit after the
-  mutation, and the #42 regression is *sequentially* consistent, so Lincheck (which checks a program
-  against its own sequential behaviour) cannot flag it. A faithful fencing model is inherently
-  non-linearizable by construction. So fencing (#42) and the residual hydration race stay on the
-  deterministic interleaving tests (`MutationFencingTest`, `FenceDuringRegistrationTest`), which pin the
-  real-time order Lincheck cannot; the extraction still pays off by isolating the primitives and getting
-  the registry under model-checking. *(L)*
+- [ ] **Robolectric multi-SDK config** — `Connectivity.isCurrentlyOnline()` uses the deprecated
+  `allNetworks` because its replacement needs API 23 while `minSdk` is 21, and both Android test
+  classes pin `@Config(sdk = [35])`. So the compatibility branch is exercised *only* at the API
+  level where it is deprecated and never at the ones it exists for, and `minSdk = 21` is a promise
+  the suite does not keep. Run the connectivity tests across a low/high SDK pair. *(S)*
+- [ ] **Key the hydration guard on a commit-only generation counter** — the guard shipped in 0.6
+  captures `sequencer.get()` before the off-lock persistence read and re-reads under `commitGuard`
+  if it moved. But hydration *itself* advances the sequencer (`load`/`loadAll` allocate a sequence
+  for the entry they install), so the guard fires on far more than "a commit raced": two concurrent
+  cold reads of *different* keys interfere: the first to take the lock sees an unchanged sequencer
+  and hydrates directly, but its own sequence allocation forces every later contender through the
+  guarded re-read, so N concurrent cold reads cost N−1 extra reads — each performed while holding
+  the commit lock, and for `loadAll` that re-read is the whole batch again
+  (`store.readAll(epochs.keys)`), which is exactly the shape of a cold start. Correctness is
+  unaffected (the re-read is authoritative); the cost is avoidable I/O in the window where the
+  commit lock is most contended. The invariant the guard actually needs is "no *commit*
+  intervened", so give commits their own counter that hydration does not advance. *(M)*
+- [ ] **Point Lincheck at the concurrency that is actually hand-rolled** — two of the shipped
+  classes prove very little for their cost: `MemoryCacheLincheckTest` and
+  `BoundedLruMapLincheckTest` run `maxEntries = 10` against keys `1:3`, so eviction never fires,
+  over operation bodies that are one `synchronized` block each. They are not *incapable* of
+  failing — they would catch a `synchronized` being dropped or split wrongly — but that is the
+  whole of their guarantee. (`MemoryCacheEvictionLincheckTest` already covers the interesting half
+  for `MemoryCache`; `BoundedLruMap` has no eviction counterpart at all.) Meanwhile the code that
+  *is* hand-rolled has no model-checking: `EpochFence.fence` does `keyEpochs[key] =
+  (keyEpochs[key] ?: 0L) + 1L` — a non-atomic read-modify-write on a `ConcurrentHashMap`, correct
+  today only because every one of its four call sites happens to hold `commitGuard`, an invariant
+  nothing states or enforces — and `registerActive`/`unregisterActive` are hand-written CAS loops
+  over a refcount map. Keep the baseline classes for their
+  synchronization-removal coverage and add cases aimed at those two primitives.
+  **And reopen the fencing half with the corrected framing:** the shipped item is right that epoch
+  fencing is not a *linearizability* property, but that indicts the linearizability **verifier**,
+  not Lincheck. The model-checking **strategy** with an `EpsilonVerifier` (accept any result) plus
+  a `@Validate` invariant is a bounded interleaving explorer, and "a committed fetch never
+  overwrites a mutation that began after it" is exactly the kind of invariant `@Validate` asserts.
+  The #42 class of bug is reachable that way. *(M)*
+- [ ] **Docs site** — `dokkaGenerate` already runs in CI as a compile check; only the GitHub
+  Pages deploy step is missing. Publish the aggregated HTML on release for a versioned, browsable
+  API reference. *(S)*
+- [ ] **Minimal `androidTest` smoke suite** — there is no `androidTest` source set anywhere in the
+  repo: `aquifer-android` and `aquifer-compose` are verified entirely by Robolectric on the host
+  JVM, against shadows that approximate `ConnectivityManager` rather than implement it. One
+  instrumented test per module — a real connectivity transition driving `revalidateOnReconnect`,
+  and one `collectAsState` recomposition on an emulator — covers what shadows cannot: real platform
+  callbacks, manifest merging, and lifecycle behaviour. Note it does *not* cover R8 by default,
+  since instrumented tests run a debug variant and neither Android module configures a minified test
+  variant; keeping/uncovering consumer rules needs an explicit minified-release check. *(M)*
+- [ ] **Prefer mutation testing to a line-coverage gate** — a coverage threshold scores a test
+  that executes a branch and asserts nothing as fully covered, precisely the failure mode this
+  suite already has (the `settle()`-based negative assertions in the Now milestone: they run the
+  code and can assert vacuously). Mutation testing over `aquifer-core`'s fencing, eviction and
+  negative-cache branches answers the question a percentage only gestures at — *if this line were
+  wrong, would a test fail?* Slower to adopt and noisier on Kotlin bytecode, hence M, and it needs
+  a baseline run before it can gate anything. *(M)*
+- [ ] **Coverage gate** *(demoted — see above)* — Kover + a CI threshold + badge. Still cheap
+  and still worth the badge once there is an artifact to badge, but it produces a number rather
+  than evidence, so it ranks below mutation testing rather than above it. Worth doing on its own only
+  if the mutation-testing item stalls. *(S)*
 - [ ] **[#13](https://github.com/QuasarApps/aquifer/issues/13) — bounded `keyEpochs`** *(deferred)* — the live-fetch refcount
   sketched in the issue is **necessary but insufficient**: it covers only the fetch capture site,
   while `load`/`loadAll`/stream-preload also capture a `(globalEpoch, 0)` snapshot on off-lock,
@@ -218,9 +371,30 @@ The engine's guarantees deserve machine-checked evidence.
   hydration and stream paths — a subtly-wrong break of the crown-jewel "never resurrect deleted
   data" guarantee, which the issue rates worse than the leak. A sound eviction needs an
   atomic-capture protocol across the hot read path; now that the epoch/registry primitives are
-  extracted (`EpochFence`), that protocol has a clear home, but it must be proven by targeted
-  interleaving tests (fencing is not linearizability-checkable — see the Lincheck item above).
-  Deferred. (The `invalidateWhere`-over-disk-only-keys growth vector remains too.) *(M)*
+  extracted (`EpochFence`), that protocol has a clear home, and the reopened Lincheck item above
+  gives it a way to be checked rather than only hand-interleaved. Still deferred until that harness
+  exists. The `invalidateWhere` growth vector is no longer hypothetical: a disk-wide sweep over an
+  enumerable store fences every matched **disk-only** key too, so it can add `keyEpochs` entries in
+  proportion to the matched set, held until `invalidateAll`. *(M)*
+- [x] **Lincheck concurrency tests** (data structures shipped; fencing scoped out at the time —
+  now reopened above) — model-check the engine's invariants instead of relying on hand-written
+  interleavings. Lincheck 2.39 on a JDK-21 runner, isolated in a dedicated `lincheckTest` task + CI
+  job so slow model-checking stays out of `check`/`build`. **Shipped:** linearizability of
+  `MemoryCache` (with and without eviction), the negative cache's `BoundedLruMap`, the real
+  engine's fetch-free mutation region
+  (`put`/`invalidate`/`invalidateAll`/`get(CacheOnly)` under `commitGuard`, doubling as the canary that
+  `suspend` `@Operation`s + a coroutine `Mutex` are Lincheck-schedulable), and — after extracting the
+  epoch/registry primitives from `RealAquifer` (extraction-with-delegation, so the checked code *is* the
+  production code) — the `SingleFlightRegistry` fetch-dedup registry.
+  **Scoped out at the time (the erstwhile "flagship #42" part):** epoch fencing is a **real-time
+  (happens-before) property, not a linearizability one** — a fetch's commit must take effect as of
+  its *start* (before a racing `put`), which linearizability never forces: it may reorder the
+  overlapping commit after the mutation, and the #42 regression is *sequentially* consistent, so a
+  linearizability **verifier** cannot flag it. That reasoning holds and is why fencing (#42) and the
+  residual hydration race stay on the deterministic interleaving tests (`MutationFencingTest`,
+  `FenceDuringRegistrationTest`) today. What it does *not* establish — and the shipped note
+  overstated — is that Lincheck as a whole is the wrong tool: its model-checking strategy under an
+  `EpsilonVerifier` is an interleaving explorer, not a linearizability check. Reopened above. *(L)*
 - [x] **Bound the negative-cache map** (shipped) — the `negative` map had the same unbounded-growth
   lifecycle (a wide key space of one-time failures — a search/autocomplete store hitting transient
   5xx — retained a record per key until `invalidateAll`), but bounding it is **sound and independent**
@@ -237,14 +411,9 @@ The engine's guarantees deserve machine-checked evidence.
   (`fakeAquifer(scope) { … }` with scripted values/failures/delays and assertable fetch counts,
   re-scriptable at runtime) plus the deterministic `FakeClock` and the `settle()` helper, so
   consuming apps can unit-test their repositories the way this library tests itself — the
-  unit-test sibling of `previewAquifer`. *(M)*
-- [ ] **Coverage gate** — Kover + a CI threshold + badge. CI runs the (substantial) test suite
-  but captures no coverage signal, so there is no machine-readable evidence of which branches of
-  the branchy fencing/eviction/negative-cache logic are exercised, and no guard against erosion.
-  *(S)*
-- [ ] **Docs site** — `dokkaGenerate` already runs in CI as a compile check; only the GitHub
-  Pages deploy step is missing. Publish the aggregated HTML on release for a versioned, browsable
-  API reference. *(S)*
+  unit-test sibling of `previewAquifer`. (`settle()`'s implementation is being replaced before the
+  tag — see Now; and the fake implements the fully abstract `Aquifer` interface, which is what
+  makes the interface's implementation stance a 1.0 decision.) *(M)*
 - [x] **`streamMany` scale ceiling — documented, then characterized** (shipped — #59) —
   `streamMany` opens one bus-collector coroutine (each with an unbounded buffer) per member and
   rebuilds the whole result `Map` on every per-key change: O(N) work per emission and O(N) live
@@ -267,14 +436,29 @@ The engine's guarantees deserve machine-checked evidence.
   stale — that file still exists as `aquifer-core`'s internal test helper, distinct from the
   *published* `settle()`/`FakeClock` twins in `aquifer-test` (the README testing section already
   points consumers there). *(S)*
-- [ ] **Sample Android app** — a small Compose app demoing airplane-mode survival,
-  pull-to-refresh coherence, and reconnect revalidation on a device. *(L)*
 
 ## 0.6 — API ergonomics & polish
 
 Small, high-frequency conveniences surfaced while building the feature set; each must keep
 the existing fencing and single-flight guarantees.
 
+- [ ] **Tag/group invalidation** — an opt-in tag index so a write can drop every key carrying a
+  tag without the caller enumerating them — the relationship-invalidation ergonomic TanStack
+  (key patterns) and RTK Query (`providesTags`/`invalidatesTags`) make first-class. Strictly a
+  tag index, **not** response normalization (a declared non-goal). **Unblocked:** this was
+  sequenced after the key-enumeration capability so it could be disk-correct rather than inheriting
+  an in-process-only caveat — that capability shipped in 0.4, and `invalidateWhere` is already
+  disk-wide on an enumerable store. The open design question is now just where the index lives:
+  in-process only (cheap, lost on process death) or persisted next to the entries (survives
+  restart, needs its own crash-consistency story). *(M)*
+- [ ] **Key-scoped policy resolver** *(deferred)* — let one store apply heterogeneous TTL (and
+  later retry/negative-cache) by key subtype — `freshness { timeToLiveFor = { key -> … } }` —
+  instead of spinning up a separate `Aquifer` per policy (which duplicates the memory cache, scope,
+  and persistence wiring). Per-call `maxAge` already covers the read-time staleness bar; the
+  genuine gap is per-key retry/jitter/negative-cache. Deferred, not dropped: it is L-sized *new
+  public surface* on an API no external user has exercised yet, and the resolver's shape (which
+  axes are per-key, whether it resolves once or per call) is exactly the kind of thing a 1.0 freeze
+  makes permanent. Revisit once 0.1.0 has users who can name the axis they need. *(L)*
 - [x] **`evictMemory()` / `trimToSize(n)`** (shipped) — shed the in-memory tier without touching
   persistence (dropped keys rehydrate from disk on the next read), so a long-lived store can answer
   Android's `onLowMemory`/`onTrimMemory(level)`. Non-suspending, silent (no events, no fencing, no
@@ -292,29 +476,31 @@ the existing fencing and single-flight guarantees.
   would break). Closed by adding a second guard: the `sequencer` (which advances on every commit under
   `commitGuard`) is captured before the off-lock read, and if it moved by the time the lock is held, the
   authoritative persisted state is re-read under the lock rather than trusting the pre-lock snapshot.
-  This is the "re-read under the lock" option scoped to *only fire when a commit actually raced*: the
-  uncontended cold-read path is unchanged, so no baseline regression to benchmark; under sustained
-  concurrent commits a raced load re-reads under the commit lock (bounded — one extra read — and
-  writers already do their I/O under that lock). Mutation-verified by a deterministic one-slot-cache
-  eviction test. *(M)*
-- [ ] **Key-scoped policy resolver** — let one store apply heterogeneous TTL (and later
-  retry/negative-cache) by key subtype — `freshness { timeToLiveFor = { key -> … } }` — instead
-  of spinning up a separate `Aquifer` per policy (which duplicates the memory cache, scope, and
-  persistence wiring). Per-call `maxAge` already covers the read-time staleness bar but not
-  retry/jitter/negative-cache, and must be threaded through every call site. This is meaningful
-  new public surface, so land it *with* (or just after) the 1.0 API-freeze review; a
-  freshness-only first slice can validate the seam before adding retry/negative resolvers. *(L)*
-- [ ] **Tag/group invalidation** — an opt-in tag index so a write can drop every key carrying a
-  tag without the caller enumerating them — the relationship-invalidation ergonomic TanStack
-  (key patterns) and RTK Query (`providesTags`/`invalidatesTags`) make first-class. Strictly a
-  tag index, **not** response normalization (a declared non-goal). Sequence *after* the
-  key-enumeration capability so it can be disk-correct rather than carrying today's
-  `invalidateWhere` in-process-only caveat. *(M)*
+  This is the "re-read under the lock" option, scoped to fire only when the sequencer moved during
+  the off-lock read — which is **broader than "a commit raced"**: hydration itself allocates a
+  sequence for the entry it installs, so concurrent cold reads of *different* keys interfere: the
+  first through the lock hydrates directly, and its sequence allocation pushes every later
+  contender onto the guarded re-read, each performed while holding `commitGuard` (for `loadAll`,
+  the whole batch is re-read). The *uncontended* path is unchanged, but the cold-read path is **not**
+  unchanged under concurrent reads, so a follow-up keys the guard on a commit-only counter (0.5).
+  Correctness is not at stake either way — the re-read is authoritative, bounded at one extra read,
+  and writers already do their I/O under that lock. Mutation-verified by a deterministic
+  one-slot-cache eviction test. *(M)*
 - [x] **`invalidateWhere { key -> Boolean }`** — shipped: predicate/bulk invalidation between the
   surgical `invalidate(key)` and the nuclear `invalidateAll()`, for "drop everything for this
   tenant/scope" resets. Each matched key is dropped and fenced under `commitGuard` exactly like
-  `invalidate`, in one commit. The predicate is tested against the keys the store currently tracks
-  in-process; persisted-only keys it has never touched are out of reach (use `invalidateAll`). *(S)*
+  `invalidate`, in one commit. **Reach is two-tier, and the store decides which tier applies.** An
+  *enumerable* `SourceOfTruth` — one whose `keysWhere(predicate)` returns non-`null`, which is what
+  `invalidateWhere` actually calls; the SPI default derives it by filtering `keys()`, so overriding
+  `keys()` alone qualifies (all the SQLDelight adapter does) and so does overriding `keysWhere`
+  directly, for a backend that can select more cheaply than listing — makes the predicate
+  **disk-wide**: the union of the keys this process tracks and every persisted
+  match, including keys it has never touched. A store that returns `null` (the SPI default) keeps
+  the reach in-process-only, and there a persisted-only key stays out of reach (use
+  `invalidateAll`). The JSON file store opts out **by design**: its filenames are one-way SHA-256
+  of the key, so enumeration would require a separate key→hash manifest with its own
+  crash-consistency story. In both tiers the predicate runs *outside* `commitGuard`, so user code
+  can never stall or re-enter the store while the lock is held. *(S)*
 - [x] **`putAll(entries)`** — shipped: bulk local write, the write-side mirror of `getAll` — seed
   many keys from a manually-fetched batch in one fenced commit, one broadcast per key, each key
   fenced exactly like `put`. *(S)*
@@ -327,17 +513,55 @@ the existing fencing and single-flight guarantees.
 
 ## 1.0 — the stability contract
 
-- [ ] **API freeze review** — a deliberate pass over every public signature against the
-  locked BCV dumps; rename/remove debts now or never. *(M)*
-- [ ] **Semver policy + CHANGELOG discipline** documented; release-notes automation — the
-  release workflow publishes to Maven Central but never cuts a GitHub Release, so watchers get
-  no signal beyond a bare tag. Auto-create one from the tagged CHANGELOG section. *(S)*
-- [ ] **"Coming from…" guides** — migration recipes from Store5 and from hand-rolled
-  repository patterns; this is how libraries actually get adopted. The Store5 mapping
-  (`Fetcher`→`fetcher`, `SourceOfTruth`→`SourceOfTruth`, `StoreRequest`→`Freshness`) is the
-  concrete unblocker for the most likely switchers. *(M)*
-- [ ] **SECURITY.md + issue/PR templates.** A published artifact with an encryption-at-rest
-  feature and no private vulnerability-disclosure path is a 1.0 gap. *(S)*
+- [ ] **API freeze review** — a deliberate pass over every public signature against the locked BCV
+  dumps; rename/remove debts now or never. The docket, concretely: *(M)*
+  - **`maxAge` symmetry, before the value-class lock.** `maxAge: Duration?` is on `stream` and
+    `get` but not on `streamMany`, `getAll`, `prefetch` or `prefetchAll`. Adding a defaulted
+    parameter is **binary**-incompatible for any type — the descriptor and the synthetic `$default`
+    bridge both change — and `Duration` compounds it: as a value class it mangles the JVM name into
+    a signature hash (`get-5_5nbZA`, `stream-moChb0s`), so adding `maxAge` renames `getAll` as well
+    as re-signing it. Source compatibility splits by role: *call sites* still compile untouched,
+    but because these are members of a fully abstract interface, every third-party **implementor**
+    has to edit its override — which is the interface-stance bullet below, arriving as a
+    consequence rather than a separate decision. Already-compiled consumers break either way.
+    Add it across the multi-key entry points, or decide it belongs on none of them; both are free
+    now and neither is later.
+  - **The `Aquifer` interface's implementation stance.** 19 members, every one abstract, no default
+    bodies — and `aquifer-test` exposes `FakeAquifer` as public API, which implements it. So every member
+    added after 1.0 breaks every third-party implementor, while two items on this roadmap (tag
+    invalidation and `getAllStates`) want new members — the key-scoped policy resolver does not,
+    since it lands as builder configuration. Pick one and
+    write it down: default bodies on additive members, `@SubclassOptInRequired`, or "not intended
+    for implementation outside this library" in the KDoc.
+  - **`…All` vs `…Many`.** `getAll`/`putAll`/`prefetchAll`/`invalidateAll` sit beside
+    `streamMany`/`collectAsStateMany`. The split currently tracks "one-shot vs reactive", which is
+    a real distinction that the names do not teach. Unify or document the rule.
+  - **A per-key failure channel for the batch reads.** `getAll` returns the resolved subset, so a
+    caller cannot distinguish "the backend omitted this key" from "this key failed", and it remaps
+    `StaleWhileRevalidate` to `CacheFirst` because it is one-shot and awaits the refresh — so
+    `getAll(ids, StaleWhileRevalidate)` blocks on the network instead of serving stale (both the
+    KDoc and the README now say so; the API still cannot express the per-key failure). A
+    `getAllStates(keys): Map<K, DataState<V>>` returns both facts.
+  - **`fresh` as an extension.** `fresh(key)` is literally `get(key, NetworkOnly)`, so it can move
+    out of the interface as a plain extension: implementors stop having to write it and the frozen
+    surface shrinks by one. `evictMemory`/`trimToSize` **cannot** follow — an extension has no way
+    to reach an arbitrary implementation's memory tier, so they either stay members or move behind a
+    separate opt-in memory-management capability interface. Decide which.
+  - **The default `timeToLive`.** It is `Duration.INFINITE`, and `isExpired` takes the first
+    horizon that applies (`maxAge ?: freshFor ?: timeToLive`) and compares `elapsed >= horizon`.
+    So for an entry carrying neither override, a store built without a `freshness { }` block
+    never refetches under `CacheFirst`, never revalidates under `StaleWhileRevalidate`, refreshes
+    only the active keys with nothing cached on reconnect, and reports `isStale = false` forever.
+    Every README example happens to set a TTL, which is why the default has never bitten. Changing
+    a default is a behavior break after 1.0 and free before.
+- [ ] **Semver policy + CHANGELOG discipline** documented — what "public API" covers (the BCV
+  dumps, not the internals), what a pre-1.0 source break costs, and one entry per change so
+  the `[Unreleased]` sprawl the 0.1.0 tag cleans up does not simply re-accumulate. The
+  release-notes automation half of this item moved to Now. *(S)*
+- [ ] **"Coming from a hand-rolled repository" guide** — the second half of the migration set (the
+  Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
+  already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
+  survival. *(S)*
 - [ ] **Supply-chain hardening** — a `dependency-review-action` gate and a CodeQL workflow on
   PRs (Dependabot bumps versions but does not CVE-alert the existing tree), GitHub Actions
   pinned to commit SHAs, and build-provenance/SLSA attestation on the release artifacts (the
@@ -345,6 +569,10 @@ the existing fencing and single-flight guarantees.
   signature). Cheap, standard insurance for a widely-embeddable library. *(S)*
 
 ## Beyond 1.0 — strategic bets
+
+**Targeting statement for the 0.x line:** Aquifer targets Android apps and JVM services. A team
+that needs to share one data layer with iOS should use Store5 today — that is a real answer, not a
+deflection, and it stays the answer until the bet below lands.
 
 - [ ] **Kotlin Multiplatform core** — dispatcher-clean coroutines are the easy half; the
   engine's JVM concurrency also has to move: the `ConcurrentHashMap` CAS loops (`inFlight`,
@@ -355,7 +583,8 @@ the existing fencing and single-flight guarantees.
   it rests on `FileChannel.force(true)` + `ATOMIC_MOVE`; okio's `FileSystem.atomicMove` provides
   the rename but a portable `fsync` is not yet a given, and the SHA-256 filename needs a
   multiplatform hash (okio `HashingSink` or kotlin-crypto) — scope the backend before committing.
-  The largest differentiator on the list. *(XL)*
+  The largest differentiator on the list, and correctly the last thing on it: it is XL work whose
+  value is entirely hypothetical until the JVM/Android line has users. *(XL)*
   - [ ] **Ktor client fetcher helper** (`aquifer-ktor`) — a sub-step of this bet, not a
     free-standing item: a `ktorConditionalFetcher`/`ktorFetcher` mirroring the OkHttp helper
     (ETag/Last-Modified ↔ `If-None-Match`/`If-Modified-Since`, 304 → `NotModified`, sharing the
@@ -365,11 +594,18 @@ the existing fencing and single-flight guarantees.
   read-side: an optimistic-update queue with rollback and conflict hooks, surviving process
   death via the same `SourceOfTruth` machinery. This is the single biggest capability gap vs
   both incumbents (Store5's `MutableStore`/`Updater`/`Bookkeeper`; TanStack/RTK `useMutation`
-  with optimistic update + rollback), and the current `put()` optimistic-write README example
-  already invites the expectation. Consider pulling a **minimal optimistic-`put`-with-rollback
-  slice** forward as its own smaller item to de-risk the top differentiator before the full
-  module — note it leans on the registration-fencing fix (#42), since a racing in-flight fetch
-  must not clobber an optimistic local write. *(XL)*
+  with optimistic update + rollback). Note what `put()` is and is not today: it is an
+  **authoritative local write**, fenced against in-flight fetches, that stands until it goes stale
+  under the staleness-aware strategies — the *effective* horizon, which a per-call `maxAge` or
+  `ttlJitter` can bring forward — but which does not hold at all under
+  `NetworkFirst`/`NetworkOnly`/`fresh`, which fetch regardless — and is then silently replaced by
+  the first successful, unfenced fetch: no rollback, no conflict hook, no
+  event distinguishing "your write" from "the server's answer". That is *not* what "optimistic"
+  means in Store5/TanStack/RTK, where it means provisional-pending-confirmation with rollback, and
+  the gap is a data-loss trap for anyone wiring an offline edit form. Consider pulling a **minimal
+  optimistic-`put`-with-rollback slice** forward as its own smaller item to de-risk the top
+  differentiator before the full module — it leans on the registration-fencing fix (#42), since a
+  racing in-flight fetch must not clobber an optimistic local write. *(XL)*
 - [ ] **Paging bridge** (`aquifer-paging`) — keyed page caching behind AndroidX Paging 3.
   *(L)*
 
@@ -381,5 +617,6 @@ serialization, and Java-first API surface.
 
 ---
 
-Suggestions welcome — open an issue. Roadmap ordering is by expected leverage and gets
-re-sorted as reality disagrees.
+Suggestions welcome — open an issue. Open items are ordered by expected leverage and get re-sorted
+as reality disagrees; shipped items stay put, in ship order, as the record of how the library got
+here.

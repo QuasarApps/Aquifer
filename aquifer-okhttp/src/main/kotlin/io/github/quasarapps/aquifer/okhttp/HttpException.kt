@@ -4,7 +4,7 @@ import java.io.IOException
 
 /**
  * Thrown by [okHttpConditionalFetcher] when a response is neither a success (2xx) nor a
- * `304 Not Modified` — i.e. a 4xx/5xx or other non-success status. It carries the HTTP [code]
+ * `304 Not Modified`, and by [okHttpFetcher] on any non-2xx response. It carries the HTTP [code]
  * so Aquifer's resilience policies can branch on the status instead of a flattened string:
  * for example retry only server errors
  * (`retry { retryOn = { it is HttpException && it.code in 500..599 } }`), or treat a `404`

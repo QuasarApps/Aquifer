@@ -21,9 +21,9 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * A runnable tour of Aquifer: stale-while-revalidate streams, request deduplication, local
- * writes, retries against a flaky API, surviving a "process restart" via disk persistence,
- * and refresh-on-reconnect.
+ * A runnable tour of Aquifer's core loop: stale-while-revalidate streams, applying an
+ * already-confirmed change to the cache, retries against a flaky API, surviving a "process
+ * restart" via disk persistence, and refresh-on-reconnect.
  *
  * Run it with: `./gradlew :sample:run`
  */
@@ -41,6 +41,13 @@ class FlakyArticlesApi {
         if (call % 3 == 0) throw IOException("simulated outage on call #$call")
         return Article(id, "Article #$id", revisions.incrementAndGet())
     }
+
+    /**
+     * Accepts a revision the backend now considers authoritative, so later fetches return it or
+     * newer. Scenario 3 writes the same revision into the cache: a confirmed change has to land on
+     * both sides, or the next fetch would "revert" it with older server state.
+     */
+    fun acceptRevision(revision: Int) = revisions.set(revision)
 }
 
 /** Logs engine activity — in an app this would be Timber/analytics. */
@@ -86,8 +93,13 @@ fun main(): Unit = runBlocking {
     log("get -> \"${stale.title}\" rev=${stale.revision} (served stale immediately; refresh runs in background)")
     delay(600)
 
-    banner("3. Local writes broadcast to every observer")
-    firstProcess.put(1, Article(1, "Article #1 (edited offline)", revision = -1))
+    banner("3. A confirmed change (here: a server push) broadcasts to every observer")
+    // `put` applies data the server has already accepted. It is deliberately not an offline-edit
+    // outbox: the next fetch replaces it, so an unsynced user edit written this way would be lost.
+    // The push updates the backend too, so scenario 5's refresh returns revision 100 rather than
+    // reverting to older server state.
+    api.acceptRevision(99)
+    firstProcess.put(1, Article(1, "Article #1 (revised upstream)", revision = 99))
     delay(200)
 
     banner("4. 'Process death': a brand-new store serves the last data from disk, no network")
