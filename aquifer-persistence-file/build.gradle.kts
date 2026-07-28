@@ -10,7 +10,6 @@ plugins {
 }
 
 group = "io.github.quasarapps"
-version = "0.1.0-SNAPSHOT"
 
 kotlin {
     explicitApi()
