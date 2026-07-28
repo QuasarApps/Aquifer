@@ -106,9 +106,11 @@ validation, but nothing has been published, so none of it has been proven agains
 ## What Aquifer is not
 
 **Read-side only.** `put` is a *local write*, not a pending mutation: there is no rollback, no
-retry queue, and no conflict hook. A written value is authoritative until its TTL expires, after
-which the first successful, unfenced fetch overwrites it — and the always-fetch strategies
-(`NetworkFirst`, `NetworkOnly`, `fresh(key)`) do not wait for the TTL at all, so any of them
+retry queue, and no conflict hook. A written value is authoritative until it goes stale, after
+which the first successful, unfenced fetch overwrites it. "Stale" is the *effective* horizon, which
+can arrive sooner than the configured `timeToLive`: a tighter per-call `maxAge` wins over it, and
+`ttlJitter` shortens it (a local write has no server `freshFor` to consult). The always-fetch
+strategies (`NetworkFirst`, `NetworkOnly`, `fresh(key)`) do not wait for any of that, so any of them
 replaces the write immediately. That overwrite is observable only as an ordinary fetch — a new
 `DataState.Content` and `onFetchSucceeded` — with nothing to say it replaced a local write, and the
 write clears the entry's stored validator, so that fetch goes out unconditional. **An offline edit form built
@@ -189,8 +191,9 @@ suspend fun onUserEdited(id: UserId, edited: User) {
 ```
 
 `put` writes to the cache and nothing else — it is not an optimistic mutation, and the next
-successful fetch overwrites it without ceremony (after the TTL under the staleness-aware
-strategies, immediately under `NetworkFirst`/`NetworkOnly`/`fresh`). See
+successful fetch overwrites it without ceremony (once it goes stale under the staleness-aware
+strategies — which a per-call `maxAge` or `ttlJitter` can bring forward — and immediately under
+`NetworkFirst`/`NetworkOnly`/`fresh`). See
 [What Aquifer is not](#what-aquifer-is-not) before building an offline edit form on it.
 
 ### One-shot reads
@@ -643,9 +646,11 @@ collects them (`viewModelScope`, `backgroundScope`) rather than waiting on the f
 
 Fetches and fire-and-forget work (`prefetch`, background revalidation) run under the store's own
 `SupervisorJob`, on `Dispatchers.Default` unless you inject a `scope` — so **fetchers execute on the
-CPU-sized pool**. One-shot cache reads and writes are *not* moved: `get`/`put` call your
-`SourceOfTruth` on the caller's coroutine, so a blocking persistence implementation blocks its
-caller and must dispatch itself. A suspending, non-blocking fetcher needs nothing;
+CPU-sized pool**. Your `SourceOfTruth` is called from both sides: a direct read or write
+(`get`'s hydration, `put`, `invalidate`) runs on the *caller's* coroutine, while a conditional
+fetch's prior read and every post-fetch write-through run on the store's scope. So a blocking
+persistence implementation must dispatch itself — it cannot rely on Aquifer to move it, and on the
+direct paths it blocks the caller. A suspending, non-blocking fetcher needs nothing;
 a blocking one (`Call.execute()`, JDBC, file reads) must be wrapped, or it will starve the
 default dispatcher under load:
 

@@ -13,9 +13,10 @@ Thanks for your interest in Aquifer!
 ```
 
 Requirements: JDK 17+ to run the build. CI builds and tests on JDK 17 and 21, and separately runs
-four JVM modules' tests (`aquifer-core`, `aquifer-test`, `aquifer-persistence-file`, `aquifer-
-okhttp`) on a JDK 11 launcher to prove the JVM-11 bytecode target actually executes on a Java 11
-runtime; `aquifer-persistence-sqldelight` is not in that job. You also need an Android SDK for `:aquifer-android` (point
+four JVM modules' tests (`aquifer-core`, `aquifer-test`, `aquifer-persistence-file`,
+`aquifer-okhttp`) on a JDK 11 launcher to prove the JVM-11 bytecode target actually executes on a
+Java 11 runtime; `aquifer-persistence-sqldelight` is not in that job. You also need an Android SDK
+for `:aquifer-android` (point
 `local.properties`' `sdk.dir` or `ANDROID_HOME` at it; compileSdk 35). The Gradle wrapper
 handles everything else.
 

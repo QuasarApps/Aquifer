@@ -155,9 +155,12 @@ What every consuming app touches daily; highest user-facing leverage.
 Make the fetch path cheap and stampede-proof under real-world conditions.
 
 - [ ] **Fix `revalidateActive()` — batch it, honor per-stream `maxAge`, add a force knob** — the
-  reconnect path walks `activeKeys` and does a per-key `load()` then `refresh()`: an N+1 over
-  storage on every reconnect, and N individual fetches where a configured `batchFetcher` would
-  collapse them into one. It also cannot see per-stream freshness — `activeKeys`
+  reconnect path walks `activeKeys` and does a per-key `load()` then `refresh()`. `load()` returns
+  from memory first, so the storage hit is per *non-resident* active key rather than per key — but
+  on the cold reconnect that matters (process resumed, memory shed) that is still N sequential
+  reads where one `readAll` would do. The fetch side is N individual calls only with the plain
+  `batchFetcher`; the coalescing overload already merges them within its window, so the gap is for
+  stores that configured no window. It also cannot see per-stream freshness — `activeKeys`
   is a bare `ConcurrentHashMap<K, Int>` refcount — so a `stream(key, maxAge = 30.seconds)` is
   revalidated against the store-wide TTL instead of the bar its caller asked for. And under the
   **default** `timeToLive = Duration.INFINITE` an entry carrying no server-declared `freshFor` is
@@ -318,15 +321,18 @@ The engine's guarantees deserve machine-checked evidence.
   commit lock is most contended. The invariant the guard actually needs is "no *commit*
   intervened", so give commits their own counter that hydration does not advance. *(M)*
 - [ ] **Point Lincheck at the concurrency that is actually hand-rolled** — two of the shipped
-  classes cannot fail: `MemoryCacheLincheckTest` and `BoundedLruMapLincheckTest` run
-  `maxEntries = 10` against keys `1:3`, so eviction never fires, over operation bodies that are one
-  `synchronized` block each. (`MemoryCacheEvictionLincheckTest` already covers the interesting half
+  classes prove very little for their cost: `MemoryCacheLincheckTest` and
+  `BoundedLruMapLincheckTest` run `maxEntries = 10` against keys `1:3`, so eviction never fires,
+  over operation bodies that are one `synchronized` block each. They are not *incapable* of
+  failing — they would catch a `synchronized` being dropped or split wrongly — but that is the
+  whole of their guarantee. (`MemoryCacheEvictionLincheckTest` already covers the interesting half
   for `MemoryCache`; `BoundedLruMap` has no eviction counterpart at all.) Meanwhile the code that
-  *is* hand-rolled has no model-checking: `EpochFence.fence` does
-  `keyEpochs[key] = (keyEpochs[key] ?: 0L) + 1L` — a non-atomic read-modify-write on a
-  `ConcurrentHashMap`, correct today only because every one of its four call sites happens to hold
-  `commitGuard`, an invariant nothing states or enforces — and `registerActive`/`unregisterActive`
-  are hand-written CAS loops over a refcount map. Retarget the two no-op classes there.
+  *is* hand-rolled has no model-checking: `EpochFence.fence` does `keyEpochs[key] =
+  (keyEpochs[key] ?: 0L) + 1L` — a non-atomic read-modify-write on a `ConcurrentHashMap`, correct
+  today only because every one of its four call sites happens to hold `commitGuard`, an invariant
+  nothing states or enforces — and `registerActive`/`unregisterActive` are hand-written CAS loops
+  over a refcount map. Keep the baseline classes for their
+  synchronization-removal coverage and add cases aimed at those two primitives.
   **And reopen the fencing half with the corrected framing:** the shipped item is right that epoch
   fencing is not a *linearizability* property, but that indicts the linearizability **verifier**,
   not Lincheck. The model-checking **strategy** with an `EpsilonVerifier` (accept any result) plus
@@ -340,8 +346,10 @@ The engine's guarantees deserve machine-checked evidence.
   repo: `aquifer-android` and `aquifer-compose` are verified entirely by Robolectric on the host
   JVM, against shadows that approximate `ConnectivityManager` rather than implement it. One
   instrumented test per module — a real connectivity transition driving `revalidateOnReconnect`,
-  and one `collectAsState` recomposition on an emulator — covers what shadows cannot, and catches
-  manifest-merge and R8 breakage that host-JVM tests structurally never see. *(M)*
+  and one `collectAsState` recomposition on an emulator — covers what shadows cannot: real platform
+  callbacks, manifest merging, and lifecycle behaviour. Note it does *not* cover R8 by default,
+  since instrumented tests run a debug variant and neither Android module configures a minified test
+  variant; keeping/uncovering consumer rules needs an explicit minified-release check. *(M)*
 - [ ] **Prefer mutation testing to a line-coverage gate** — a coverage threshold scores a test
   that executes a branch and asserts nothing as fully covered, precisely the failure mode this
   suite already has (the `settle()`-based negative assertions in the Now milestone: they run the
@@ -516,8 +524,9 @@ the existing fencing and single-flight guarantees.
     now and neither is later.
   - **The `Aquifer` interface's implementation stance.** 19 members, every one abstract, no default
     bodies — and `aquifer-test` exposes `FakeAquifer` as public API, which implements it. So every member
-    added after 1.0 breaks every third-party implementor, while at least three items on this
-    roadmap (tag invalidation, `getAllStates`, per-key policy) want new members. Pick one and
+    added after 1.0 breaks every third-party implementor, while two items on this roadmap (tag
+    invalidation and `getAllStates`) want new members — the key-scoped policy resolver does not,
+    since it lands as builder configuration. Pick one and
     write it down: default bodies on additive members, `@SubclassOptInRequired`, or "not intended
     for implementation outside this library" in the KDoc.
   - **`…All` vs `…Many`.** `getAll`/`putAll`/`prefetchAll`/`invalidateAll` sit beside
@@ -529,10 +538,11 @@ the existing fencing and single-flight guarantees.
     `getAll(ids, StaleWhileRevalidate)` blocks on the network instead of serving stale (both the
     KDoc and the README now say so; the API still cannot express the per-key failure). A
     `getAllStates(keys): Map<K, DataState<V>>` returns both facts.
-  - **`fresh`/`evictMemory`/`trimToSize` as extensions.** `fresh(key)` is literally
-    `get(key, NetworkOnly)`, and the two shedding calls are memory-tier controls. As interface
-    members every implementor must write them; as extensions on `Aquifer` they cost implementors
-    nothing and shrink the frozen surface by three.
+  - **`fresh` as an extension.** `fresh(key)` is literally `get(key, NetworkOnly)`, so it can move
+    out of the interface as a plain extension: implementors stop having to write it and the frozen
+    surface shrinks by one. `evictMemory`/`trimToSize` **cannot** follow — an extension has no way
+    to reach an arbitrary implementation's memory tier, so they either stay members or move behind a
+    separate opt-in memory-management capability interface. Decide which.
   - **The default `timeToLive`.** It is `Duration.INFINITE`, and `isExpired` takes the first
     horizon that applies (`maxAge ?: freshFor ?: timeToLive`) and compares `elapsed >= horizon`.
     So for an entry carrying neither override, a store built without a `freshness { }` block
@@ -581,8 +591,9 @@ deflection, and it stays the answer until the bet below lands.
   death via the same `SourceOfTruth` machinery. This is the single biggest capability gap vs
   both incumbents (Store5's `MutableStore`/`Updater`/`Bookkeeper`; TanStack/RTK `useMutation`
   with optimistic update + rollback). Note what `put()` is and is not today: it is an
-  **authoritative local write**, fenced against in-flight fetches, that stands until the TTL
-  expires under the staleness-aware strategies — but not at all under
+  **authoritative local write**, fenced against in-flight fetches, that stands until it goes stale
+  under the staleness-aware strategies — the *effective* horizon, which a per-call `maxAge` or
+  `ttlJitter` can bring forward — but which does not hold at all under
   `NetworkFirst`/`NetworkOnly`/`fresh`, which fetch regardless — and is then silently replaced by
   the first successful, unfenced fetch: no rollback, no conflict hook, no
   event distinguishing "your write" from "the server's answer". That is *not* what "optimistic"
