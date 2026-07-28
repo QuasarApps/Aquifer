@@ -26,7 +26,7 @@ a locked public API of 55 types and 284 non-synthetic members across seven
 with a default. Every API decision so far — including the ones about to be frozen at 1.0 — was
 made against imagined users, which makes the freeze docket below guesswork until real ones exist.
 Shipping 0.1.0 is the highest-leverage remaining action on this file, and the first three items
-are what stands between here and the tag.
+are what stand between here and the tag.
 
 - [ ] **Fix the release version gate** — `release.yml` verifies the tag against five modules
   (`aquifer-core`, `aquifer-persistence-file`, `aquifer-android`, `aquifer-compose`,
@@ -488,8 +488,10 @@ the existing fencing and single-flight guarantees.
   surgical `invalidate(key)` and the nuclear `invalidateAll()`, for "drop everything for this
   tenant/scope" resets. Each matched key is dropped and fenced under `commitGuard` exactly like
   `invalidate`, in one commit. **Reach is two-tier, and the store decides which tier applies.** An
-  *enumerable* `SourceOfTruth` — one whose `keys()` returns non-`null`, which is all the SQLDelight
-  adapter overrides, since the SPI's default `keysWhere` filters `keys()` — makes the predicate
+  *enumerable* `SourceOfTruth` — one whose `keysWhere(predicate)` returns non-`null`, which is what
+  `invalidateWhere` actually calls; the SPI default derives it by filtering `keys()`, so overriding
+  `keys()` alone qualifies (all the SQLDelight adapter does) and so does overriding `keysWhere`
+  directly, for a backend that can select more cheaply than listing — makes the predicate
   **disk-wide**: the union of the keys this process tracks and every persisted
   match, including keys it has never touched. A store that returns `null` (the SPI default) keeps
   the reach in-process-only, and there a persisted-only key stays out of reach (use
