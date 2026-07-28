@@ -219,8 +219,9 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * ([serverFreshForMillis][PersistedEntry.serverFreshForMillis]), so any validator previously
      * stored for [key] is dropped — the next [conditional fetch][AquiferBuilder.conditionalFetcher]
      * of the key goes out unconditionally (a full body instead of a possible `304`) — and the
-     * entry's staleness is governed by the store-wide [FreshnessConfig.timeToLive] (or a per-call
-     * `maxAge`), with no server-declared horizon to override it.
+     * entry's staleness is governed by a per-call `maxAge` when one is passed and otherwise by the
+     * store-wide [FreshnessConfig.timeToLive] as shortened by [FreshnessConfig.ttlJitter], with no
+     * server-declared horizon to override it.
      *
      * This is a local write, **not** a pending mutation: there is no rollback and no retry queue.
      * Under the staleness-aware strategies the written value stands until it goes stale; from then
@@ -244,7 +245,9 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * responsibility. Each entry carries the same consequences as a single [put]: no
      * [validator][PersistedEntry.validator] and no server freshness horizon, so a stored validator
      * for a written key is dropped and its next conditional fetch is unconditional, with staleness
-     * left to the store-wide [FreshnessConfig.timeToLive]. These are local writes, not pending
+     * left to a per-call `maxAge` when one is passed and otherwise to the store-wide
+     * [FreshnessConfig.timeToLive] as shortened by [FreshnessConfig.ttlJitter]. These are local
+     * writes, not pending
      * mutations — no rollback, no retry queue, and the first successful, unfenced fetch of a written
      * key silently overwrites it: once the entry goes stale under the staleness-aware strategies, or
      * immediately under [Freshness.NetworkFirst]/[Freshness.NetworkOnly]/[fresh], which fetch

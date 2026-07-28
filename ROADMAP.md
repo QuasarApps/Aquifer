@@ -36,7 +36,7 @@ are what stand between here and the tag.
   publishing modules instead of hardcoding it, and hoist the seven copies of
   `version = "0.1.0-SNAPSHOT"` into a single root property so a release bump is one edit that
   cannot drift. A release **blocker**, not owner action. *(S)*
-- [ ] **Collapse `[Unreleased]` into a dated `0.1.0` section** — the changelog is ~37 KB and 27
+- [ ] **Collapse `[Unreleased]` into a dated `0.1.0` section** — the changelog carries 27
   separate `### Added` blocks under one `[Unreleased]` heading: a per-PR work log rather than
   release notes, and self-contradictory when read as a whole (the oldest entry, at the bottom,
   describes `DataState` as `Loading`/`Content`/`Failure`, while a newer one above it adds `Empty`).
@@ -109,8 +109,8 @@ are what stand between here and the tag.
 
 What every consuming app touches daily; highest user-facing leverage.
 
-- [ ] **Widen the CLI sample past its first five scenarios** — `sample/…/Main.kt` is 131 lines
-  and five scenarios (cold start, SWR, `put`, "process death", reconnect-with-retry). It uses no
+- [ ] **Widen the CLI sample past its first five scenarios** — `sample/…/Main.kt` covers cold
+  start, SWR, `put`, "process death" and reconnect-with-retry. It uses no
   batching, no `getAll`/`streamMany`, no `prefetch`, no conditional fetching, no negative caching,
   no `stats`/`snapshot`, no encryption or migration — and nothing that demonstrates single-flight
   dedup. CI runs `:sample:run` once per workflow
