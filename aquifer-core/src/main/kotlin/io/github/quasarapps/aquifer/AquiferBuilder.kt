@@ -317,9 +317,13 @@ public class FreshnessConfig internal constructor() {
      * all of that to happen again. A per-call `maxAge` on [Aquifer.stream]/[Aquifer.get] is the
      * narrower lever: it restores staleness for those reads alone, because [Aquifer.revalidateActive]
      * and [Aquifer.revalidateOn] ignore it and judge every key by the server horizon or this TTL. An
-     * entry whose server horizon has elapsed still goes stale and refetches regardless of this TTL,
-     * as do the explicit demands ([Freshness.NetworkFirst], [Freshness.NetworkOnly],
-     * [Aquifer.fresh]). [Aquifer.invalidate] fetches too, indirectly: every fetch-capable stream
+     * entry whose server horizon has elapsed goes stale regardless of this TTL, and refetches
+     * wherever the strategy fetches at all — [Freshness.CacheOnly] reports it as stale and still
+     * never goes to the network. The explicit demands ([Freshness.NetworkFirst],
+     * [Freshness.NetworkOnly], [Aquifer.fresh]) skip the staleness question entirely. None of these
+     * outrank negative caching: a live suppression window holds back every one of them *except*
+     * [Freshness.NetworkOnly] and [Aquifer.fresh], which are the explicit-demand carve-out.
+     * [Aquifer.invalidate] fetches too, indirectly: every fetch-capable stream
      * collecting that key refetches as soon as it observes the drop, so an invalidation with an
      * active collector hits the network immediately; with no collector it only makes the next read
      * a miss.

@@ -88,6 +88,13 @@ are what stand between here and the tag.
   *not* owner action: `ci.yml` triggers on `push: branches: [main]` plus `pull_request`, so a
   merge landing on `develop` — the branch every PR targets — runs no CI at all; add `develop` to
   the push branches.
+- [x] **Fence fetches at registration (correctness fix, shipped — #42)** — `refreshWith`
+  captured the fetch's epoch in the lazily-started body, which runs *after* `inFlight.putIfAbsent`;
+  a `put`/`invalidate` in that gap bumped the epoch but the fetch then read the *post-bump* epoch,
+  so its commit passed the epoch check and overwrote the just-written local value — a silent loss
+  of a user's write in the headline "never resurrect deleted/edited data" guarantee. Fixed by
+  capturing the epoch before `scope.async` (it only ever fails safe), with a deterministic
+  register-then-fence interleaving test `MutationFencingTest` didn't cover. *(S)*
 - [x] **JDK 17/21 build matrix + JVM-11 runtime check** (shipped — #46) — CI ran only Temurin
   21, while every module compiles to JVM-11 bytecode and CONTRIBUTING promises JDK-17 builds;
   neither was tested, so a newer-API slip or 11-incompatible bytecode could ship undetected.
@@ -97,13 +104,6 @@ are what stand between here and the tag.
   `aquifer-persistence-file`, `aquifer-okhttp`. **`aquifer-persistence-sqldelight` is excluded**,
   and the two Android modules run under Robolectric on the host JDK, so "runs on a JDK 11
   runtime" is verified for four of the seven modules configured for publication, not all seven. *(S)*
-- [x] **Fence fetches at registration (correctness fix, shipped — #42)** — `refreshWith`
-  captured the fetch's epoch in the lazily-started body, which runs *after* `inFlight.putIfAbsent`;
-  a `put`/`invalidate` in that gap bumped the epoch but the fetch then read the *post-bump* epoch,
-  so its commit passed the epoch check and overwrote the just-written local value — a silent loss
-  of a user's write in the headline "never resurrect deleted/edited data" guarantee. Fixed by
-  capturing the epoch before `scope.async` (it only ever fails safe), with a deterministic
-  register-then-fence interleaving test `MutationFencingTest` didn't cover. *(S)*
 
 ## 0.2 — Compose & everyday ergonomics
 
@@ -158,9 +158,11 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   reconnect path walks `activeKeys` and does a per-key `load()` then `refresh()`. `load()` returns
   from memory first, so the storage hit is per *non-resident* active key rather than per key — but
   on the cold reconnect that matters (process resumed, memory shed) that is still N sequential
-  reads where one `readAll` would do. The fetch side is N individual calls only with the plain
-  `batchFetcher`; the coalescing overload already merges them within its window, so the gap is for
-  stores that configured no window. It also cannot see per-stream freshness — `activeKeys`
+  reads where one `readAll` would do. On the fetch side the sweep's per-key `refresh()` calls are
+  merged only by the single accumulator, which exists solely when a plain `batchFetcher` is paired
+  with a positive `coalesceWindow`; `fetcher`, `conditionalFetcher`, `conditionalBatchFetcher` and a
+  window-less `batchFetcher` all stay N calls, so the gap is every store without that window. It
+  also cannot see per-stream freshness — `activeKeys`
   is a bare `ConcurrentHashMap<K, Int>` refcount — so a `stream(key, maxAge = 30.seconds)` is
   revalidated against the store-wide TTL instead of the bar its caller asked for. And under the
   **default** `timeToLive = Duration.INFINITE` an entry carrying no server-declared `freshFor` is

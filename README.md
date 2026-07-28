@@ -155,9 +155,11 @@ servable, but due for revalidation:
 > only the active keys with nothing cached — a first fetch that failed while offline retries on the
 > next trigger, unless negative caching is configured and still suppressing that key, in which case
 > the sweep skips it until the window elapses — and `isStale` is permanently `false`. What still
-> reaches the network: a cache miss, `NetworkFirst`/`NetworkOnly`, `fresh(key)`, and any entry whose
-> per-call `maxAge` or server-declared `freshFor` has elapsed. Give any store whose data can change
-> upstream a `timeToLive`.
+> reaches the network: a cache miss, `NetworkFirst`/`NetworkOnly`, `fresh(key)`, and — under any
+> strategy that fetches at all, so not `CacheOnly` — an entry whose per-call `maxAge` or
+> server-declared `freshFor` has elapsed. A live negative-cache suppression window still holds all
+> of those back except `NetworkOnly`/`fresh(key)`. Give any store whose data can change upstream a
+> `timeToLive`.
 
 Two multi-key divergences are worth knowing before you reach for them. `getAll` is one-shot and
 awaits every fetch it triggers, so `StaleWhileRevalidate` there behaves like `CacheFirst` — it
@@ -166,7 +168,8 @@ stale-while-revalidate across many keys. And `maxAge` is a `get`/`stream` knob o
 `getAll`/`streamMany`/`prefetch`/`prefetchAll` take `freshness` alone, judging staleness against
 each entry's server-declared `freshFor` when it has one and the store's TTL otherwise.
 `revalidateActive()` judges keys the same way, so a stream collecting under a tighter `maxAge` does
-not make the reconnect sweep refresh it — only a finite store TTL does.
+not make the reconnect sweep refresh it — an elapsed server `freshFor` or a finite store TTL is what
+does.
 
 ### Streams keep every observer coherent
 
