@@ -22,8 +22,10 @@ import kotlinx.coroutines.test.runCurrent
  * on it — pass `backgroundScope` (or the `TestScope` itself) when constructing the store or
  * [fakeAquifer]; a store running on its own dispatcher has nothing shared to drain. It does
  * **not** advance the test's virtual clock: work gated on a delay (e.g. a `prefetch` of a key
- * scripted with a fetch delay) needs `advanceUntilIdle()`/`advanceTimeBy(...)` instead of (or in
- * addition to) `settle()`.
+ * scripted with a fetch delay) needs virtual time advanced with `advanceTimeBy(...)` instead of
+ * (or in addition to) `settle()`. Prefer `advanceTimeBy` over `advanceUntilIdle()` for this:
+ * `advanceUntilIdle` stops once only background-scope tasks remain, so it never fires a delay
+ * whose sole owner is the store's `backgroundScope`-built scope.
  */
 public fun TestScope.settle() {
     runCurrent()

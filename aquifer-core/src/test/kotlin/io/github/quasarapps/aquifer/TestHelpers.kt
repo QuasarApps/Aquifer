@@ -11,7 +11,9 @@ import kotlinx.coroutines.test.runCurrent
  * injected scope rather than running inline, so the scheduler must be driven before asserting on
  * them. Unlike the yield-loop this replaces, draining is complete by construction: work needing
  * more scheduler hops than a fixed yield count cannot silently satisfy a negative assertion. It
- * does not advance virtual time — delay-gated work still needs `advanceUntilIdle()`.
+ * does not advance virtual time — delay-gated work needs `advanceTimeBy(...)`, or
+ * `advanceUntilIdle()` only when foreground work is also pending (it stops once nothing but
+ * background-scope tasks remain).
  */
 fun TestScope.settle() {
     runCurrent()

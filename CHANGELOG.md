@@ -16,8 +16,9 @@ versions may contain breaking changes.
   assertion ("no fetch happened") could pass vacuously the day the work it polices needed a ninth
   hop. Call sites inside `runTest` compile unchanged; `kotlinx-coroutines-test` joins
   `aquifer-test`'s `api` dependencies, since the receiver type is part of its public API. As
-  before, `settle()` does not advance virtual time — work gated on a delay still needs
-  `advanceUntilIdle()`/`advanceTimeBy(...)`.
+  before, `settle()` does not advance virtual time — work gated on a delay needs
+  `advanceTimeBy(...)` (note that `advanceUntilIdle()` stops once only background-scope tasks
+  remain, so it does not fire a delay owned solely by a store scope built on `backgroundScope`).
 
 ### Added — memory-pressure shedding
 
