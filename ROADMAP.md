@@ -67,10 +67,12 @@ all landed. What remains is owner action — the four signing secrets and the ve
   integration branch that every PR targets, and `main` is release-only (releases are cut by
   pushing a `v*` tag). Remaining owner action: set `develop` as the GitHub default branch so
   PRs and Dependabot target it by default, keeping `main` protected. The earlier Dependabot
-  toolchain bumps (#7–#11, #19, #20) and the #44/#45 follow-ups are all resolved. One line here is
-  *not* owner action: `ci.yml` triggers on `push: branches: [main]` plus `pull_request`, so a
-  merge landing on `develop` — the branch every PR targets — runs no CI at all; add `develop` to
-  the push branches.
+  toolchain bumps (#7–#11, #19, #20) and the #44/#45 follow-ups are all resolved. The one line here
+  that was *not* owner action is done: `ci.yml` triggered on `push: branches: [main]` plus
+  `pull_request`, so a merge landing on `develop` — the branch every PR targets — ran no CI at all,
+  and every merge to date landed unverified as a merge commit. `develop` is now in the push
+  branches, and `cancel-in-progress` is scoped to pull requests so a post-merge run finishes
+  instead of being cancelled by the next merge landing on top of it.
 - [x] **Fence fetches at registration (correctness fix, shipped — #42)** — `refreshWith`
   captured the fetch's epoch in the lazily-started body, which runs *after* `inFlight.putIfAbsent`;
   a `put`/`invalidate` in that gap bumped the epoch but the fetch then read the *post-bump* epoch,
