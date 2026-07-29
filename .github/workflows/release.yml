@@ -12,13 +12,13 @@ jobs:
     name: Publish to Maven Central
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Only this job needs write access, and only for creating the GitHub Release; anything added
-    # later starts from the read-only default above.
-    permissions:
-      contents: write
     steps:
       - name: Check out
         uses: actions/checkout@v7
+        with:
+          # Nothing here pushes to the repository, so the job's token has no business sitting in
+          # .git/config where every later build and publish command inherits it.
+          persist-credentials: false
 
       - name: Set up JDK
         uses: actions/setup-java@v5
@@ -53,25 +53,11 @@ jobs:
           done
           echo "Releasing version $TAG_VERSION"
 
-      # Extract before publishing, not alongside the release step at the end: a Maven Central
+      # Checked before the build, not in the release job that consumes it: a Maven Central
       # publication cannot be undone, so a missing or misnamed CHANGELOG section has to fail while
       # failing is still free.
-      - name: Extract release notes from the CHANGELOG
-        run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          awk -v ver="$TAG_VERSION" '
-            $0 ~ "^## \\[" ver "\\]" { found = 1; next }
-            found && (/^## / || /^\[[^]]+\]: /) { exit }
-            found { print }
-          ' CHANGELOG.md | sed '/./,$!d' > "$RUNNER_TEMP/release-notes.md"
-          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
-            echo "CHANGELOG.md has no '## [$TAG_VERSION]' section, so the release would be"
-            echo "announced with empty notes. Add the section (or collapse [Unreleased] into it)"
-            echo "before tagging."
-            exit 1
-          fi
-          echo "Release notes ($(wc -l < "$RUNNER_TEMP/release-notes.md") lines):"
-          cat "$RUNNER_TEMP/release-notes.md"
+      - name: Verify the CHANGELOG has a section for this tag
+        run: .github/scripts/changelog-section.sh "${GITHUB_REF_NAME#v}"
 
       - name: Build
         run: ./gradlew build --stacktrace
@@ -84,16 +70,36 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
 
-      # Last, so a failed publication never announces a release that has no artifacts behind it.
-      # `gh` ships on the runner, so this adds no third-party action to the release path.
+  # A separate job, not a final step of `publish`, because the two have opposite failure
+  # economics: publishing is irreversible, creating a release is a fallible API call. Sharing a job
+  # would mean a transient GitHub outage forces "re-run failed jobs" to repeat the publish, which
+  # immutable coordinates then reject — leaving the release uncreatable by re-run. Split, only this
+  # job re-runs.
+  release:
+    name: Cut a GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only write access in the workflow, held by the only job that needs it.
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # `gh` ships on the runner, so the release path takes on no third-party action.
       - name: Cut a GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          # A version with a pre-release suffix (1.0.0-rc1) is marked as such; -SNAPSHOT was
-          # already refused by the version gate.
-          case "$TAG_VERSION" in
+          .github/scripts/changelog-section.sh "$TAG_VERSION" > "$RUNNER_TEMP/release-notes.md"
+          # SemVer pre-release is the '-' component; build metadata after '+' may also contain a
+          # hyphen (1.0.0+build-1), so strip that first. -SNAPSHOT is refused by the version gate.
+          case "${TAG_VERSION%%+*}" in
             *-*) PRERELEASE=--prerelease ;;
             *)   PRERELEASE= ;;
           esac

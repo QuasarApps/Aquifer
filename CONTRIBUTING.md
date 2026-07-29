@@ -66,12 +66,24 @@ and `SIGNING_KEY_PASSWORD`. Bump `version` in `gradle.properties` and add a date
 tag doesn't match the module versions, when the version is a `-SNAPSHOT`, or when the CHANGELOG
 has no section for it.
 
-After publishing, the workflow cuts a GitHub Release from that CHANGELOG section, marking a
-version with a pre-release suffix (`1.0.0-rc1`) as a pre-release. The two ordering choices are
-deliberate: the notes are extracted **before** the build, so a missing section fails while
-failing is still free — a Maven Central publication cannot be undone — and the release is created
-**last**, so a failed publication never announces a release with nothing behind it. Creating it is
-why the `publish` job holds `contents: write` while the workflow default stays `contents: read`.
+After publishing, a second job cuts a GitHub Release from that CHANGELOG section, marking a
+version with a pre-release suffix (`1.0.0-rc1`) as a pre-release. Three structural choices there
+are deliberate, and all follow from one asymmetry — **publishing is irreversible, everything
+around it is retryable**:
+
+- The CHANGELOG section is verified **before the build**, by `.github/scripts/changelog-section.sh`,
+  so a missing or misnamed section fails while failing is still free.
+- Cutting the release is a **separate `needs: publish` job**, not a final step of the publish job.
+  A transient GitHub API failure would otherwise make "re-run failed jobs" repeat the publication,
+  which immutable coordinates reject — leaving the release impossible to create by re-run. Split,
+  only the release job re-runs.
+- That release job holds the workflow's only `contents: write`; the default stays `contents: read`,
+  and both jobs check out with `persist-credentials: false` so no token lingers in `.git/config`
+  for later build or publish commands to inherit.
+
+The extraction script matches the heading as a literal prefix rather than a regex — a version is
+not regex-safe (`.` matches any character, and SemVer build metadata may contain `+`) — and stops
+at the next `##` heading or the link-reference footer.
 
 `version` lives in `gradle.properties` alone: Gradle applies it to every project, so a release
 bump is one edit. Do **not** reintroduce a `version = ...` line in a module build file — the
