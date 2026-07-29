@@ -67,5 +67,13 @@ documentation is unclear, but they are not security defects:
 - **The cache is not a trust boundary.** A cached value is whatever your fetcher returned; Aquifer
   neither validates nor sanitises it. Data that arrives untrusted is still untrusted after a
   round-trip through the cache.
-- **Anything requiring an attacker who already has your process memory or your app's private
-  storage.** At that point the cache is not the weakest link.
+- **Anything that presupposes attacker code already executing inside your process.** At that point
+  the attacker reads the plaintext values Aquifer hands your app and the cache is not the weakest
+  link.
+
+  This exclusion is about *in-process execution only* — deliberately **not** about storage access.
+  Read or write access to the cache directory is precisely the threat `ValueCipher` and its
+  key-binding exist to address: the entry's key is authenticated associated data specifically so
+  that a blob swapped into another key's file fails to decrypt rather than being served as that
+  key's value. A defect there is in scope, as is anything that writes plaintext when a cipher is
+  configured.

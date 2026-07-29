@@ -6,10 +6,13 @@ body:
     attributes:
       value: |
         Before filing: most surprises about *when Aquifer fetches* come down to freshness
-        configuration. `timeToLive` defaults to `Duration.INFINITE`, so with no
-        `freshness { timeToLive = … }` block an entry carrying no server-declared `freshFor` never
-        goes stale — `CacheFirst` serves the first fetch forever and `StaleWhileRevalidate` never
-        revalidates. The README's freshness callout covers this.
+        configuration. Staleness takes the first horizon that applies — a per-call `maxAge`, else a
+        server-declared `freshFor`, else the store's `timeToLive` — and that TTL defaults to
+        `Duration.INFINITE`. So an entry with **none** of the three never goes stale, and for those
+        entries `CacheFirst` serves the first fetch forever while `StaleWhileRevalidate` never
+        revalidates in the background. Passing `maxAge` to `get`/`stream` restores staleness for
+        that read; `fresh(key)`, `NetworkFirst` and `NetworkOnly` fetch regardless of it. The
+        README's freshness callout covers the precedence.
 
         For a security problem, do **not** use this form — see [SECURITY.md](https://github.com/QuasarApps/aquifer/blob/develop/SECURITY.md).
 
