@@ -32,8 +32,10 @@ all landed. What remains is owner action — the four signing secrets and the ve
 
 - [ ] **Publish v0.1.0 to Maven Central** — add the four secrets from
   [CONTRIBUTING](CONTRIBUTING.md), bump the (newly single) `version` in `gradle.properties` off
-  `-SNAPSHOT`, confirm the `0.1.0` CHANGELOG date still matches the tag date, push `v0.1.0`; the
-  guarded release workflow does the rest. *(owner action — S)*
+  `-SNAPSHOT`, confirm the `0.1.0` CHANGELOG date still matches the tag date, fast-forward `main` to
+  `develop`, push `v0.1.0`. The workflow verifies and *stages* the deployment; publication is a
+  deliberate click in the Central Portal, after which the **Cut a GitHub Release** workflow
+  announces it. Full walkthrough in [CONTRIBUTING](CONTRIBUTING.md). *(owner action — S)*
 - [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
   published coordinates from a clean project, and confirm the snippet still lists all seven
   published modules. *(S)*
@@ -125,10 +127,12 @@ all landed. What remains is owner action — the four signing secrets and the ve
   and nothing a watcher could see. It now extracts the tagged `## [x.y.z]` CHANGELOG section and
   creates the release from it. The structure follows from one asymmetry — publishing is
   irreversible, everything around it is retryable: the section is verified **before the build**, so
-  a missing one fails while failing is free; and the release is cut in a **separate `needs: publish`
-  job**, so a transient API failure re-runs alone rather than forcing a re-publish that immutable
-  coordinates would reject. That job holds the workflow's only `contents: write`, and both jobs
-  check out with `persist-credentials: false`. Extraction is a shared script matching the heading
+  a missing one fails while failing is free; and the release is cut outside the publish run, so a
+  transient API failure re-runs alone rather than forcing a re-publish that immutable coordinates
+  would reject. It began as a `needs: publish` job and became its own manually dispatched workflow
+  once publication itself was gated on the Central Portal — chained to a *staged* upload it would
+  announce a version nobody can resolve. It holds the only `contents: write`, and every checkout
+  uses `persist-credentials: false`. Extraction is a shared script matching the heading
   literally rather than as a regex (a version is not regex-safe), and pre-release detection strips
   SemVer build metadata before looking for a `-`. Uses the runner's `gh`, adding no third-party
   action to the release path. *(S)*

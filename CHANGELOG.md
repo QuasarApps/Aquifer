@@ -9,11 +9,13 @@ versions may contain breaking changes.
 
 ### Added
 
-- The release workflow now cuts a GitHub Release from the tagged `CHANGELOG` section after
-  publishing to Maven Central, marking a SemVer pre-release suffix as such. It refuses to publish at
-  all when the CHANGELOG has no section for the tag, checked before the build so the failure costs
-  nothing. Release creation is a separate job, so a transient GitHub API failure can be re-run
-  without repeating an irreversible publication.
+- A `v*` tag now *stages* the Maven Central deployment rather than publishing it outright, leaving
+  the Central Portal's Publish button as the last reversible checkpoint before coordinates become
+  permanent. A separate, manually dispatched **Cut a GitHub Release** workflow then announces the
+  tag from its `CHANGELOG` section, marking a SemVer pre-release suffix as such — kept out of the
+  publish run so a release is never announced for a deployment that could still be dropped, and so a
+  transient GitHub API failure can never force a re-publish. The tag is also refused outright if the
+  CHANGELOG has no section for it, checked before the build so the failure costs nothing.
 
 ## [0.1.0] - 2026-07-29
 
