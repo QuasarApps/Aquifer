@@ -49,6 +49,24 @@ providers.gradleProperty("testJvm").map(String::toInt).orNull?.let { testJvm ->
     }
 }
 
+// The release workflow verifies the tag against every module configured for publication. It used a
+// hardcoded list that silently went stale — two modules were added to the publishing set without
+// being added to the gate, so either could ship at a version the tag never claimed. Deriving the
+// list here means a new publishing module is covered the moment it applies the plugin.
+val publishingModulePaths = mutableListOf<String>()
+subprojects {
+    plugins.withId("com.vanniktech.maven.publish") { publishingModulePaths += path }
+}
+
+tasks.register("publishingModules") {
+    group = "help"
+    description = "Prints the project path of every module configured to publish to Maven Central."
+    // Populated by the time configuration finishes, which is when the task action (and the
+    // configuration-cache entry) captures it.
+    val paths = publishingModulePaths
+    doLast { paths.sorted().forEach(::println) }
+}
+
 // Aggregated API docs for the published modules: ./gradlew dokkaGenerate
 dependencies {
     dokka(project(":aquifer-core"))

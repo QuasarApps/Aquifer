@@ -25,17 +25,9 @@ a locked public API of 55 types and 284 non-synthetic members across seven
 `implementation("io.github.quasarapps:…")` against this library, hit a POM problem, or argued
 with a default. Every API decision so far — including the ones about to be frozen at 1.0 — was
 made against imagined users, which makes the freeze docket below guesswork until real ones exist.
-Shipping 0.1.0 is the highest-leverage remaining action on this file, and the first two items
-are what stand between here and the tag.
+Shipping 0.1.0 is the highest-leverage remaining action on this file, and the first item is
+what stands between here and the tag.
 
-- [ ] **Fix the release version gate** — `release.yml` verifies the tag against five modules
-  (`aquifer-core`, `aquifer-persistence-file`, `aquifer-android`, `aquifer-compose`,
-  `aquifer-okhttp`), but **seven** declare `publishToMavenCentral()`: `aquifer-test` and
-  `aquifer-persistence-sqldelight` are published by `publishAndReleaseToMavenCentral` while going
-  unchecked, so either can ship at a version the tag never claimed. Derive the module list from the
-  publishing modules instead of hardcoding it, and hoist the seven copies of
-  `version = "0.1.0-SNAPSHOT"` into a single root property so a release bump is one edit that
-  cannot drift. A release **blocker**, not owner action. *(S)*
 - [ ] **Collapse `[Unreleased]` into a dated `0.1.0` section** — the changelog carries 27
   separate `### Added` blocks under one `[Unreleased]` heading: a per-PR work log rather than
   release notes, and self-contradictory when read as a whole (the oldest entry, at the bottom,
@@ -96,6 +88,15 @@ are what stand between here and the tag.
   `aquifer-persistence-file`, `aquifer-okhttp`. **`aquifer-persistence-sqldelight` is excluded**,
   and the two Android modules run under Robolectric on the host JDK, so "runs on a JDK 11
   runtime" is verified for four of the seven modules configured for publication, not all seven. *(S)*
+- [x] **Fix the release version gate** (shipped) — `release.yml` verified the tag against five
+  hardcoded modules while **seven** declare `publishToMavenCentral()`, so `aquifer-test` and
+  `aquifer-persistence-sqldelight` were published by `publishAndReleaseToMavenCentral` without ever
+  being checked and either could ship at a version the tag never claimed. The gate now derives its
+  list from a root `publishingModules` task, so a module joins the gate the moment it applies the
+  plugin, and refuses to release if that list comes back empty rather than passing vacuously. The
+  seven copies of `version = "0.1.0-SNAPSHOT"` are hoisted into a single `version` property in
+  `gradle.properties`, making a release bump one edit that cannot drift — and leaving the per-module
+  check as the guard against a module reintroducing its own. *(S)*
 - [x] **Replace `aquifer-test`'s `settle()` with `runCurrent()`** (shipped) — `settle()` was
   `repeat(8) { yield() }`: a fixed hop count standing in for "the scheduler is quiet", under which
   roughly 40 *negative* assertions in the core suite would pass vacuously the day their work needed
