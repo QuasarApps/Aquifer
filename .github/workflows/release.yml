@@ -15,6 +15,10 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v7
+        with:
+          # Nothing here pushes to the repository, so the job's token has no business sitting in
+          # .git/config where every later build and publish command inherits it.
+          persist-credentials: false
 
       - name: Set up JDK
         uses: actions/setup-java@v5
@@ -49,6 +53,12 @@ jobs:
           done
           echo "Releasing version $TAG_VERSION"
 
+      # Checked before the build, not in the release job that consumes it: a Maven Central
+      # publication cannot be undone, so a missing or misnamed CHANGELOG section has to fail while
+      # failing is still free.
+      - name: Verify the CHANGELOG has a section for this tag
+        run: .github/scripts/changelog-section.sh "${GITHUB_REF_NAME#v}"
+
       - name: Build
         run: ./gradlew build --stacktrace
 
@@ -59,3 +69,42 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+
+  # A separate job, not a final step of `publish`, because the two have opposite failure
+  # economics: publishing is irreversible, creating a release is a fallible API call. Sharing a job
+  # would mean a transient GitHub outage forces "re-run failed jobs" to repeat the publish, which
+  # immutable coordinates then reject — leaving the release uncreatable by re-run. Split, only this
+  # job re-runs.
+  release:
+    name: Cut a GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only write access in the workflow, held by the only job that needs it.
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # `gh` ships on the runner, so the release path takes on no third-party action.
+      - name: Cut a GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          .github/scripts/changelog-section.sh "$TAG_VERSION" > "$RUNNER_TEMP/release-notes.md"
+          # SemVer pre-release is the '-' component; build metadata after '+' may also contain a
+          # hyphen (1.0.0+build-1), so strip that first. -SNAPSHOT is refused by the version gate.
+          case "${TAG_VERSION%%+*}" in
+            *-*) PRERELEASE=--prerelease ;;
+            *)   PRERELEASE= ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --verify-tag \
+            $PRERELEASE
