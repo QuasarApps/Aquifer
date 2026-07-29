@@ -25,24 +25,15 @@ a locked public API of 55 types and 284 non-synthetic members across seven
 `implementation("io.github.quasarapps:…")` against this library, hit a POM problem, or argued
 with a default. Every API decision so far — including the ones about to be frozen at 1.0 — was
 made against imagined users, which makes the freeze docket below guesswork until real ones exist.
-Shipping 0.1.0 is the highest-leverage remaining action on this file. All three items that could
-block *publication* are now cleared; what remains before the tag is the four signing secrets and the
-version bump off `-SNAPSHOT` (owner action), plus one piece of engineering that is not a publication
-blocker but wants to land first: cutting a GitHub Release from the tag, which is only automatic for
-tags pushed after the workflow gains that step.
+Shipping 0.1.0 is the highest-leverage remaining action on this file, and the engineering is done:
+the version gate, the changelog collapse, the `settle()` correction and the GitHub Release step have
+all landed. What remains is owner action — the four signing secrets and the version bump off
+`-SNAPSHOT`.
 
 - [ ] **Publish v0.1.0 to Maven Central** — add the four secrets from
   [CONTRIBUTING](CONTRIBUTING.md), bump the (newly single) `version` in `gradle.properties` off
   `-SNAPSHOT`, confirm the `0.1.0` CHANGELOG date still matches the tag date, push `v0.1.0`; the
   guarded release workflow does the rest. *(owner action — S)*
-- [ ] **Cut a GitHub Release from the tagged CHANGELOG** — the release workflow ends at
-  `publishAndReleaseToMavenCentral` and holds only `contents: read`, so a `v*` tag produces
-  artifacts and nothing a watcher can see: no release entry, no notes, no diff link. Generate the
-  release in the same job from the tagged CHANGELOG section (which the `0.1.0` collapse just made
-  extractable), widening the job to `contents: write`. Pulled forward from 1.0 — it costs a step and
-  it is the only announcement channel the project has. Not a publication blocker, but **worth
-  landing before the tag**: the workflow only fires for tags pushed after it exists, so a `v0.1.0`
-  pushed first would need its release created by hand. *(S)*
 - [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
   published coordinates from a clean project, and confirm the snippet still lists all seven
   published modules. *(S)*
@@ -117,6 +108,15 @@ tags pushed after the workflow gains that step.
   `Fixed` entry described a race no published artifact ever had, and every "breaking (pre-release)"
   note a delta against an unpublished state. Both are stated as absent and why, and the shipped
   guarantees they described are folded into the surface description. *(S)*
+- [x] **Cut a GitHub Release from the tagged CHANGELOG** (shipped) — the release workflow ended at
+  `publishAndReleaseToMavenCentral` and held only `contents: read`, so a `v*` tag produced artifacts
+  and nothing a watcher could see. It now extracts the tagged `## [x.y.z]` CHANGELOG section and
+  creates the release from it, with `contents: write` granted on that job alone so anything added
+  later starts read-only. Two ordering decisions: extraction runs **before** the build and publish,
+  because a Maven Central publication cannot be undone and a missing or misnamed section must fail
+  while failing is still free; and the release is cut **last**, so a failed publication never
+  announces a release with no artifacts behind it. A version carrying a pre-release suffix is marked
+  `--prerelease`. Uses the runner's `gh`, adding no third-party action to the release path. *(S)*
 
 ## 0.2 — Compose & everyday ergonomics
 

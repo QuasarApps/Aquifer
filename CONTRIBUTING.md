@@ -61,9 +61,17 @@ handles everything else.
 Releases are cut by tagging: pushing a `v*` tag runs the `release` workflow, which publishes
 to Maven Central via the Central Portal. It requires these repository secrets:
 `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY` (ASCII-armored PGP),
-and `SIGNING_KEY_PASSWORD`. Bump `version` in `gradle.properties` and update `CHANGELOG.md`
-before tagging — the workflow refuses to publish when the tag doesn't match the module
-versions or when the version is a `-SNAPSHOT`.
+and `SIGNING_KEY_PASSWORD`. Bump `version` in `gradle.properties` and add a dated
+`## [x.y.z]` section to `CHANGELOG.md` before tagging — the workflow refuses to publish when the
+tag doesn't match the module versions, when the version is a `-SNAPSHOT`, or when the CHANGELOG
+has no section for it.
+
+After publishing, the workflow cuts a GitHub Release from that CHANGELOG section, marking a
+version with a pre-release suffix (`1.0.0-rc1`) as a pre-release. The two ordering choices are
+deliberate: the notes are extracted **before** the build, so a missing section fails while
+failing is still free — a Maven Central publication cannot be undone — and the release is created
+**last**, so a failed publication never announces a release with nothing behind it. Creating it is
+why the `publish` job holds `contents: write` while the workflow default stays `contents: read`.
 
 `version` lives in `gradle.properties` alone: Gradle applies it to every project, so a release
 bump is one edit. Do **not** reintroduce a `version = ...` line in a module build file — the

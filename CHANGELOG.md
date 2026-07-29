@@ -7,6 +7,13 @@ versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- The release workflow now cuts a GitHub Release from the tagged `CHANGELOG` section after
+  publishing to Maven Central, marking a pre-release suffix as such. It refuses to publish at all
+  when the CHANGELOG has no section for the tag, checked before the build so the failure costs
+  nothing.
+
 ## [0.1.0] - 2026-07-29
 
 First public release. Aquifer is an offline-first, stale-while-revalidate caching data layer for
