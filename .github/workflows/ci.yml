@@ -2,15 +2,25 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `develop` is the branch every PR targets, so without it here a merge ran no CI at all: the
+    # only checks were on the pre-merge PR ref, against whatever `develop` happened to be then.
+    # Two PRs that are each green independently can still break once both have landed.
+    branches: [main, develop]
   pull_request:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull requests share a per-ref group, so a new push supersedes the run for the commit it
+  # replaced. Pushes get a per-*commit* group instead, so they never contend with each other:
+  # a shared group would not be enough even with cancellation off, because GitHub keeps only one
+  # *pending* run per group — a third merge would cancel the second's queued run and leave that
+  # commit unverified, which is the gap this is meant to close.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # Redundant for pushes now that their group is unique, but it keeps the intent explicit: a
+  # merged commit that people branch from gets verified, a superseded PR commit does not.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
