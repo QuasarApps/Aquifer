@@ -1,0 +1,83 @@
+name: Bug report
+description: Something behaves differently from what its KDoc or the README says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: most surprises about *when Aquifer fetches* come down to freshness
+        configuration. `timeToLive` defaults to `Duration.INFINITE`, so with no
+        `freshness { timeToLive = … }` block an entry carrying no server-declared `freshFor` never
+        goes stale — `CacheFirst` serves the first fetch forever and `StaleWhileRevalidate` never
+        revalidates. The README's freshness callout covers this.
+
+        For a security problem, do **not** use this form — see [SECURITY.md](https://github.com/QuasarApps/aquifer/blob/develop/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect instead?
+      description: Quote the KDoc or README line you expected to hold, if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: store-config
+    attributes:
+      label: How is the store configured?
+      description: >
+        The `aquifer { }` block, with anything sensitive redacted. Freshness, persistence and
+        which fetcher variant you configured are the parts that usually matter.
+      render: kotlin
+      placeholder: |
+        val users = aquifer<UserId, User> {
+            fetcher { id -> api.fetchUser(id) }
+            freshness { timeToLive = 5.minutes }
+            persistence(jsonFileSourceOfTruth(cacheDir))
+        }
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >
+        A failing test is ideal — `aquifer-test` ships `fakeAquifer`, `FakeClock` and `settle()`,
+        and the README's testing section shows the shape. Otherwise, the sequence of calls.
+      render: kotlin
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Aquifer version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: modules
+    attributes:
+      label: Which modules are involved?
+      multiple: true
+      options:
+        - aquifer-core
+        - aquifer-compose
+        - aquifer-android
+        - aquifer-persistence-file
+        - aquifer-persistence-sqldelight
+        - aquifer-okhttp
+        - aquifer-test
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and toolchain
+      description: JVM or Android (with API level), plus Kotlin and JDK versions.
+      placeholder: "Android API 34, Kotlin 2.4.10, JDK 21"
+    validations:
+      required: true

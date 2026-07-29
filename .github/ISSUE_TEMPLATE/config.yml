@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/QuasarApps/aquifer/security/advisories/new
+    about: Report it privately here rather than as a public issue. See SECURITY.md.
+  - name: Roadmap
+    url: https://github.com/QuasarApps/aquifer/blob/develop/ROADMAP.md
+    about: What has shipped, what is planned, and the declared non-goals.
