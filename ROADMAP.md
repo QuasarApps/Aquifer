@@ -71,8 +71,10 @@ all landed. What remains is owner action — the four signing secrets and the ve
   that was *not* owner action is done: `ci.yml` triggered on `push: branches: [main]` plus
   `pull_request`, so a merge landing on `develop` — the branch every PR targets — ran no CI at all,
   and every merge to date landed unverified as a merge commit. `develop` is now in the push
-  branches, and `cancel-in-progress` is scoped to pull requests so a post-merge run finishes
-  instead of being cancelled by the next merge landing on top of it.
+  branches. Concurrency is keyed per *commit* for pushes and per ref for pull requests: scoping
+  `cancel-in-progress` to PRs alone would not have been enough, since GitHub keeps only one
+  *pending* run per group, so a third merge would cancel the second's queued run and leave that
+  commit unverified — the very gap the trigger was added to close.
 - [x] **Fence fetches at registration (correctness fix, shipped — #42)** — `refreshWith`
   captured the fetch's epoch in the lazily-started body, which runs *after* `inFlight.putIfAbsent`;
   a `put`/`invalidate` in that gap bumped the epoch but the fetch then read the *post-bump* epoch,

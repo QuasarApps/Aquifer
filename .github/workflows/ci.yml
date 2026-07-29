@@ -12,10 +12,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Cancel superseded runs only for pull requests, where a push means the earlier commit no longer
-  # matters. A run on `main` or `develop` is validating a commit that is already merged and that
-  # people will branch from, so it has to finish even when the next merge lands on top of it.
+  # Pull requests share a per-ref group, so a new push supersedes the run for the commit it
+  # replaced. Pushes get a per-*commit* group instead, so they never contend with each other:
+  # a shared group would not be enough even with cancellation off, because GitHub keeps only one
+  # *pending* run per group — a third merge would cancel the second's queued run and leave that
+  # commit unverified, which is the gap this is meant to close.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # Redundant for pushes now that their group is unique, but it keeps the intent explicit: a
+  # merged commit that people branch from gets verified, a superseded PR commit does not.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
