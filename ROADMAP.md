@@ -45,9 +45,18 @@ all landed. What remains is owner action — the four signing secrets and the ve
   `StoreReadResponse`→`DataState`), and the honest differences are short: no
   `MutableStore`/`Updater` yet, JVM/Android only, epoch fencing instead of bookkeeping. An
   afternoon of writing, not the M-sized guide set it was filed as. *(S)*
-- [ ] **SECURITY.md + issue/PR templates** — pulled forward from 1.0: the *first* release ships an
-  encryption-at-rest hook, and there is no private disclosure path, so a report on it arrives as a
-  public issue. Not a 1.0 nicety when 0.1.0 is the artifact that ships the feature. *(S)*
+- [x] **SECURITY.md + issue/PR templates** (shipped) — the *first* release ships an
+  encryption-at-rest hook with no private disclosure path, so a report on it would have arrived as a
+  public issue. `SECURITY.md` routes reports to GitHub private vulnerability reporting (no invented
+  security mailing address; the repo has no published contact) and, more usefully, draws the scope
+  line: cached data at rest, the `ValueCipher` key-binding, and validator replay are in scope, while
+  plaintext-by-default persistence, SHA-256 filenames (filesystem-safety, *not* confidentiality —
+  low-entropy keys are recoverable by hashing candidates), and `put` not being a mutation queue are
+  documented behaviour rather than defects. Issue forms ask for the fields that actually diagnose
+  this library — the `aquifer { }` block, the module, whether a `timeToLive` was set — and the bug
+  form leads with the infinite-TTL default, the single most likely cause of a "why is it not
+  fetching" report. **One owner action remains: private vulnerability reporting must be enabled in
+  repository settings, or the link in `SECURITY.md` is a dead end.** *(S)*
 - [ ] **Sample Android app, built against the published artifacts** — a small Compose app demoing
   airplane-mode survival, pull-to-refresh coherence, and reconnect revalidation on a device. Moved
   up from 0.5 to sit immediately after the tag, and resolved from Maven Central rather than an

@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose something Aquifer should do that it does not do today.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things worth checking first, both in [ROADMAP.md](https://github.com/QuasarApps/aquifer/blob/develop/ROADMAP.md): whether
+        this is already planned (it is the single ordering of record), and whether it is a
+        **declared non-goal** — image/blob caching, cross-process sharing, and a few others are
+        deliberately out of scope rather than merely unbuilt.
+
+        Before 1.0 the public API is locked by binary-compatibility validation, so additions are
+        weighed against freezing them at 1.0.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting?
+      description: >
+        The situation in your app, not the API you have in mind — that often has a solution
+        already, and it is the part a maintainer can least easily guess.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What are you doing today instead?
+      description: >
+        Whether a workaround exists, and what it costs you, is usually what decides priority.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would the API look like?
+      description: Optional — a sketch of the call site you would want.
+      render: kotlin
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Which module would this belong to?
+      options:
+        - aquifer-core
+        - aquifer-compose
+        - aquifer-android
+        - aquifer-persistence-file
+        - aquifer-persistence-sqldelight
+        - aquifer-okhttp
+        - aquifer-test
+        - A new module
+        - Not sure
+    validations:
+      required: true
