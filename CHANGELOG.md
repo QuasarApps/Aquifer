@@ -104,13 +104,17 @@ present in a published artifact and are not release notes.
 
 **Persistence**
 
-- `SourceOfTruth<K, V>`: the persistence SPI. Required `read`/`write`/`delete`; optional
+- `SourceOfTruth<K, V>`: the persistence SPI. Required `read`/`write`/`delete`/`deleteAll`; optional
   `readAll`/`writeAll`/`deleteMany` (defaulting to per-key loops) so a queryable backend can serve
   a multi-key read in one round-trip; optional `keys()`/`keysWhere(predicate)` for enumeration.
 - `PersistedEntry` carries the value, its write timestamp, its validator, and any server-declared
   freshness, so staleness and conditional revalidation both survive process death.
-- Hydration on memory misses, best-effort write-through after fetches, and all-or-nothing direct
-  mutations.
+- Hydration on memory misses, best-effort write-through after fetches, and direct mutations that
+  become visible in memory and on the update bus only once persistence has accepted them. Bulk
+  persistence itself is not transactional unless a store makes it so: the default `writeAll` and
+  `deleteMany` loop per key, so a failure partway through can leave an earlier prefix on disk. The
+  SQLDelight store overrides both (one transaction); the JSON file store commits its renames under
+  one lock acquisition.
 - When a store can enumerate, `invalidateWhere` becomes **disk-wide** — its predicate reaches every
   persisted key, not just those tracked in memory this run. A non-enumerable store (the default)
   keeps in-process reach; use `invalidateAll` for a full wipe. The predicate runs outside the commit
@@ -142,8 +146,10 @@ present in a published artifact and are not release notes.
   `reads` and `hitRate`. A hit is a caller read satisfied from cache under its requested `Freshness`
   without awaiting a fetch; background revalidation and prefetch warmups aren't counted.
 - `evictMemory()` and `trimToSize(n)` shed the in-memory tier, for wiring a long-lived store to
-  Android's `onLowMemory()`/`onTrimMemory(level)`. Memory-only: persistence is untouched, so each
-  dropped key rehydrates from disk on its next read with no fetch and unchanged staleness.
+  Android's `onLowMemory()`/`onTrimMemory(level)`. Memory-only: persistence is untouched, so on a
+  persistence-backed store each dropped key rehydrates from disk on its next read with no fetch and
+  unchanged staleness. On a store with no `persistence`, memory is the only tier — dropped data is
+  gone and the next read re-fetches (or yields the empty state under `CacheOnly`).
 - `snapshot()`, `stats()`, `evictMemory()` and `trimToSize()` never suspend, never touch
   persistence, and stay callable on a closed store.
 
@@ -182,8 +188,10 @@ present in a published artifact and are not release notes.
   touch.
 - `schemaVersion` + `migrate(fromVersion, json)` — a breaking model change no longer means wiping the
   cache directory. Migration runs lazily on read, only for entries stored below the current version,
-  and returning `null` drops the entry. A version-0 store (the default) is byte-for-byte the
-  unversioned format.
+  and returning `null` drops the entry. A version-0 store (the default) writes no version field
+  under the default `Json`, preserving the pre-migration on-disk format byte for byte; a
+  caller-supplied `Json { encodeDefaults = true }` emits `"schemaVersion":0`, as it already does for
+  the defaulted `validator` field.
 - `cipher: ValueCipher?` — encryption at rest. A two-method `encrypt`/`decrypt` seam applied to each
   entry's serialized bytes, depending on nothing beyond the JDK, so production crypto (e.g. Tink's
   `Aead` over the Android Keystore) plugs in through a thin adapter. The entry's key is passed as
