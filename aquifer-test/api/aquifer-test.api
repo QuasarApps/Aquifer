@@ -52,6 +52,6 @@ public final class io/github/quasarapps/aquifer/test/FakeClock : io/github/quasa
 }
 
 public final class io/github/quasarapps/aquifer/test/SettleKt {
-	public static final fun settle (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static final fun settle (Lkotlinx/coroutines/test/TestScope;)V
 }
 

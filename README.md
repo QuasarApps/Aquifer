@@ -681,9 +681,8 @@ callable from any thread including the main one.
 [ROADMAP.md](ROADMAP.md) is the single ordering of record — what has shipped, what is next
 through 1.0 and beyond (KMP, offline mutations, a Paging bridge), and the declared non-goals.
 Everything before the first tag sits in its **Now** milestone; the headline is **v0.1.0 on Maven
-Central**, which needs two blockers cleared — a dated changelog section in place of the
-`[Unreleased]` work log, and `aquifer-test`'s `settle()` corrected to `runCurrent()` while its
-signature is still free to change — plus the owner-side signing secrets and the version bumped off
+Central**, which needs one blocker cleared — a dated changelog section in place of the
+`[Unreleased]` work log — plus the owner-side signing secrets and the version bumped off
 `-SNAPSHOT`. See the roadmap for the rest and for their order — this section deliberately does not
 restate it.
 

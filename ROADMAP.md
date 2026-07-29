@@ -25,8 +25,8 @@ a locked public API of 55 types and 284 non-synthetic members across seven
 `implementation("io.github.quasarapps:…")` against this library, hit a POM problem, or argued
 with a default. Every API decision so far — including the ones about to be frozen at 1.0 — was
 made against imagined users, which makes the freeze docket below guesswork until real ones exist.
-Shipping 0.1.0 is the highest-leverage remaining action on this file, and the first two items
-are what stand between here and the tag.
+Shipping 0.1.0 is the highest-leverage remaining action on this file, and the first item is
+what stands between here and the tag.
 
 - [ ] **Collapse `[Unreleased]` into a dated `0.1.0` section** — the changelog carries 27
   separate `### Added` blocks under one `[Unreleased]` heading: a per-PR work log rather than
@@ -36,14 +36,6 @@ are what stand between here and the tag.
   actually ships rather than the deltas that got there — and drop the pre-release `Fixed` entries
   for races no published version ever had. The #48–#51 backfill is done; the collapse is what
   remains. The tag's release notes are cut from this section, so it is a blocker too. *(S)*
-- [ ] **Replace `aquifer-test`'s `settle()` with `runCurrent()`** — `aquifer-test` exposes
-  `settle()` as locked public API, implemented as `repeat(8) { yield() }`: a fixed hop count
-  standing in for "the scheduler is quiet". Roughly 40 *negative* assertions in the core suite
-  (assert that no fetch happened) pass vacuously if the work they mean to catch needs a ninth hop,
-  and consuming apps are about to inherit the same trap. `runCurrent()` drains everything
-  currently scheduled and is already used 27 times in-repo. It needs the `TestScope` receiver, so
-  this is a signature change — free before the tag, a breaking change for consumers once it is
-  published. *(S)*
 - [ ] **Publish v0.1.0 to Maven Central** — add the four secrets from
   [CONTRIBUTING](CONTRIBUTING.md), bump the (newly single) version off `-SNAPSHOT`, date the
   CHANGELOG, push `v0.1.0`; the guarded release workflow does the rest. *(owner action — S)*
@@ -105,6 +97,16 @@ are what stand between here and the tag.
   seven copies of `version = "0.1.0-SNAPSHOT"` are hoisted into a single `version` property in
   `gradle.properties`, making a release bump one edit that cannot drift — and leaving the per-module
   check as the guard against a module reintroducing its own. *(S)*
+- [x] **Replace `aquifer-test`'s `settle()` with `runCurrent()`** (shipped) — `settle()` was
+  `repeat(8) { yield() }`: a fixed hop count standing in for "the scheduler is quiet", under which
+  roughly 40 *negative* assertions in the core suite would pass vacuously the day their work needed
+  a ninth hop. It is now a `TestScope` extension over `runCurrent()` — draining everything scheduled
+  at the current virtual time, complete by construction rather than by hop count — and core's
+  same-named `TestHelpers.kt` twin got the identical fix. All 99 call sites compiled unchanged and
+  the full suite passed on the first run, so no assertion had yet gone vacuous; the change closes
+  the trap before consumers inherit it. The signature change was made while free (nothing
+  published); `kotlinx-coroutines-test` joins the module's `api` surface, since the receiver type is
+  public API. *(S)*
 
 ## 0.2 — Compose & everyday ergonomics
 
@@ -355,8 +357,8 @@ The engine's guarantees deserve machine-checked evidence.
   variant; keeping/uncovering consumer rules needs an explicit minified-release check. *(M)*
 - [ ] **Prefer mutation testing to a line-coverage gate** — a coverage threshold scores a test
   that executes a branch and asserts nothing as fully covered, precisely the failure mode this
-  suite already has (the `settle()`-based negative assertions in the Now milestone: they run the
-  code and can assert vacuously). Mutation testing over `aquifer-core`'s fencing, eviction and
+  suite carried until the yield-bounded `settle()` was replaced (its negative assertions ran the
+  code and could assert vacuously), and the class of gap a percentage can reintroduce silently. Mutation testing over `aquifer-core`'s fencing, eviction and
   negative-cache branches answers the question a percentage only gestures at — *if this line were
   wrong, would a test fail?* Slower to adopt and noisier on Kotlin bytecode, hence M, and it needs
   a baseline run before it can gate anything. *(M)*
@@ -412,9 +414,9 @@ The engine's guarantees deserve machine-checked evidence.
   (`fakeAquifer(scope) { … }` with scripted values/failures/delays and assertable fetch counts,
   re-scriptable at runtime) plus the deterministic `FakeClock` and the `settle()` helper, so
   consuming apps can unit-test their repositories the way this library tests itself — the
-  unit-test sibling of `previewAquifer`. (`settle()`'s implementation is being replaced before the
-  tag — see Now; and the fake implements the fully abstract `Aquifer` interface, which is what
-  makes the interface's implementation stance a 1.0 decision.) *(M)*
+  unit-test sibling of `previewAquifer`. (`settle()` has since become a `TestScope` extension over
+  `runCurrent()` — see Now; and the fake implements the fully abstract `Aquifer` interface, which is
+  what makes the interface's implementation stance a 1.0 decision.) *(M)*
 - [x] **`streamMany` scale ceiling — documented, then characterized** (shipped — #59) —
   `streamMany` opens one bus-collector coroutine (each with an unbounded buffer) per member and
   rebuilds the whole result `Map` on every per-key change: O(N) work per emission and O(N) live

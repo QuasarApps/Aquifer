@@ -1,14 +1,16 @@
 package io.github.quasarapps.aquifer.test
 
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 
 /**
- * Suspends the current coroutine long enough for fire-and-forget work already scheduled on a
- * background scope to run to completion — the scheduling half of Aquifer's deterministic testing.
+ * Runs every task already scheduled on this [TestScope]'s scheduler — including the follow-up
+ * tasks that work itself schedules — until the queue at the current virtual time is empty: the
+ * scheduling half of Aquifer's deterministic testing.
  *
- * Under `runTest`, background work (a [prefetch][io.github.quasarapps.aquifer.Aquifer.prefetch],
- * a stale-while-revalidate refresh) only runs while the test coroutine itself is suspended, so an
- * explicit suspension point is needed before asserting on its effects:
+ * Under `runTest`, fire-and-forget work (a [prefetch][io.github.quasarapps.aquifer.Aquifer.prefetch],
+ * a stale-while-revalidate refresh) lands on the store's scope rather than running inline, so the
+ * scheduler must be driven before asserting on its effects:
  *
  * ```
  * store.prefetch("ada")
@@ -16,12 +18,15 @@ import kotlinx.coroutines.yield
  * assertEquals(1, store.fetchCount("ada"))
  * ```
  *
- * It only yields — it does **not** advance the test's virtual clock. If the background work is
- * gated on a delay (e.g. a `prefetch` of a key scripted with a fetch delay), advance time with
- * `advanceUntilIdle()`/`advanceTimeBy(...)` instead of (or in addition to) `settle()`.
+ * This drains only the scheduler the receiver owns, so it settles a store whose `scope` was built
+ * on it — pass `backgroundScope` (or the `TestScope` itself) when constructing the store or
+ * [fakeAquifer]; a store running on its own dispatcher has nothing shared to drain. It does
+ * **not** advance the test's virtual clock: work gated on a delay (e.g. a `prefetch` of a key
+ * scripted with a fetch delay) needs virtual time advanced with `advanceTimeBy(...)` instead of
+ * (or in addition to) `settle()`. Prefer `advanceTimeBy` over `advanceUntilIdle()` for this:
+ * `advanceUntilIdle` stops once only background-scope tasks remain, so it never fires a delay
+ * whose sole owner is the store's `backgroundScope`-built scope.
  */
-public suspend fun settle() {
-    repeat(SETTLE_YIELDS) { yield() }
+public fun TestScope.settle() {
+    runCurrent()
 }
-
-private const val SETTLE_YIELDS = 8
