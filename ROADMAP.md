@@ -55,20 +55,19 @@ all landed. What remains is owner action — the four signing secrets and the ve
   documented behaviour rather than defects. Issue forms ask for the fields that actually diagnose
   this library — the `aquifer { }` block, the module, whether a `timeToLive` was set — and the bug
   form leads with the infinite-TTL default, the single most likely cause of a "why is it not
-  fetching" report. **One owner action remains: private vulnerability reporting must be enabled in
-  repository settings, or the link in `SECURITY.md` is a dead end.** *(S)*
+  fetching" report. Private vulnerability reporting is enabled in repository settings, so the
+  `SECURITY.md` link and the issue-template contact link both resolve. *(S)*
 - [ ] **Sample Android app, built against the published artifacts** — a small Compose app demoing
   airplane-mode survival, pull-to-refresh coherence, and reconnect revalidation on a device. Moved
   up from 0.5 to sit immediately after the tag, and resolved from Maven Central rather than an
   `includeBuild`, so it doubles as the project's first real consumer: it validates the POMs, the
   coordinates, the install snippet and the Android packaging in one pass. Scoped down from L to
   M — a device demo, not a showcase app. *(M)*
-- [ ] **Repo hygiene** *(owner action — S)* — branching model is settled: `develop` is the
-  integration branch that every PR targets, and `main` is release-only (releases are cut by
-  pushing a `v*` tag). Remaining owner action: set `develop` as the GitHub default branch so
-  PRs and Dependabot target it by default, keeping `main` protected. The earlier Dependabot
-  toolchain bumps (#7–#11, #19, #20) and the #44/#45 follow-ups are all resolved. The one line here
-  that was *not* owner action is done: `ci.yml` triggered on `push: branches: [main]` plus
+- [x] **Repo hygiene** (shipped) — branching model is settled and now enforced by configuration:
+  `develop` is the GitHub **default branch**, so PRs and Dependabot target it without anyone
+  remembering to, and `main` is release-only (releases are cut by pushing a `v*` tag). The earlier
+  Dependabot toolchain bumps (#7–#11, #19, #20) and the #44/#45 follow-ups are all resolved. The one
+  line here that was *not* owner action: `ci.yml` triggered on `push: branches: [main]` plus
   `pull_request`, so a merge landing on `develop` — the branch every PR targets — ran no CI at all,
   and every merge to date landed unverified as a merge commit. `develop` is now in the push
   branches. Concurrency is keyed per *commit* for pushes and per ref for pull requests: scoping
