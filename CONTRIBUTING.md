@@ -61,13 +61,18 @@ handles everything else.
 Releases are cut by tagging: pushing a `v*` tag runs the `release` workflow, which publishes
 to Maven Central via the Central Portal. It requires these repository secrets:
 `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY` (ASCII-armored PGP),
-and `SIGNING_KEY_PASSWORD`. Bump `version` in the module build files and update
-`CHANGELOG.md` before tagging — the workflow refuses to publish when the tag doesn't match
-the module versions or when the version is a `-SNAPSHOT`.
+and `SIGNING_KEY_PASSWORD`. Bump `version` in `gradle.properties` and update `CHANGELOG.md`
+before tagging — the workflow refuses to publish when the tag doesn't match the module
+versions or when the version is a `-SNAPSHOT`.
 
-That version gate enumerates the modules it checks by hand, in a shell loop in
-`.github/workflows/release.yml`, while `publishAndReleaseToMavenCentral` publishes every
-module declaring `publishToMavenCentral()`. The two lists drift silently: a module missing
-from the loop is still published, just without its version ever being checked against the
-tag. Add every new publishing module to that loop in the same PR that starts publishing it —
-a roadmap item tracks deriving the list from the publishing modules instead.
+`version` lives in `gradle.properties` alone: Gradle applies it to every project, so a release
+bump is one edit. Do **not** reintroduce a `version = ...` line in a module build file — the
+gate checks each publishing module separately, so an override would fail the release rather
+than ship silently.
+
+That gate takes the modules it checks from the root `publishingModules` task, which lists every
+subproject applying the `com.vanniktech.maven.publish` plugin — the same condition that decides
+what `publishAndReleaseToMavenCentral` publishes. A new publishing module therefore joins the
+gate the moment it applies the plugin, with nothing to keep in sync by hand, and the workflow
+refuses to release if that list ever comes back empty rather than passing without checking
+anything.
