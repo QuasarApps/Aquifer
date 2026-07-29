@@ -7,537 +7,240 @@ versions may contain breaking changes.
 
 ## [Unreleased]
 
-### Changed — `settle()` drains the scheduler instead of yielding eight times
-
-- **Breaking (pre-release):** `aquifer-test`'s `settle()` is now an extension on
-  `kotlinx.coroutines.test.TestScope`, implemented as `runCurrent()`, and no longer suspends. It
-  drains every task scheduled at the current virtual time — including follow-ups those tasks
-  schedule — where the old `repeat(8) { yield() }` stopped after a fixed hop count, so a negative
-  assertion ("no fetch happened") could pass vacuously the day the work it polices needed a ninth
-  hop. Call sites inside `runTest` compile unchanged; `kotlinx-coroutines-test` joins
-  `aquifer-test`'s `api` dependencies, since the receiver type is part of its public API. As
-  before, `settle()` does not advance virtual time — work gated on a delay needs
-  `advanceTimeBy(...)` (note that `advanceUntilIdle()` stops once only background-scope tasks
-  remain, so it does not fire a delay owned solely by a store scope built on `backgroundScope`).
-
-### Added — memory-pressure shedding
-
-- `Aquifer.evictMemory()` and `Aquifer.trimToSize(maxEntries)` shed the in-memory tier for wiring a
-  long-lived store to Android's `onLowMemory()`/`onTrimMemory(level)`. `evictMemory()` drops every
-  resident entry; `trimToSize(n)` keeps the `n` most-recently-used and drops the least-recently-used
-  rest. Both are non-suspending, silent, and memory-only: persistence is untouched, so each dropped
-  key rehydrates from disk (no fetch, unchanged staleness) on its next read. They emit no events,
-  don't fence in-flight fetches, don't count toward `CacheStats.evictions`, and are safe to call on
-  a closed store — like `snapshot()`/`stats()`.
-
-### Fixed — hydration-guard hardening (prerequisites for the above)
-
-Both are only reachable once `evictMemory`/`trimToSize` can drop a just-committed entry (a
-most-recently-used entry is never LRU-evicted, so neither could occur before):
-
-- `commitFetched` now persists **before** bumping the commit sequencer, matching every direct
-  mutation (`put`/`invalidate`/…). This upholds the invariant the `load`/`loadAll` hydration guard
-  relies on — an observer that sees commit sequence *S* also sees disk at *S* — which the previous
-  bump-then-persist order violated, and which a shed dropping the entry mid-persist would otherwise
-  let a racing read exploit to serve its stale pre-commit snapshot.
-- A new `stream` collector no longer serves a stale initial value when a manual shed races its
-  subscription. If a fetch commit lands in the gap between hydration and bus subscription (missed on
-  the bus) and the shed then drops it from memory, the collector's pre-subscription snapshot can no
-  longer be corroborated, so it refetches (or reports the empty state under `CacheOnly`) instead of
-  emitting the stale value. LRU eviction never triggers this path, so the streaming hot path is
-  unaffected.
-
-### Fixed — residual hydration race
-
-- `load`/`loadAll` read persistence outside the commit lock and, under the lock, re-checked only
-  memory before hydrating. Because a fetch commit does not move the epoch, that memory re-check was
-  the only guard against a stale pre-lock disk snapshot overwriting a fresher commit — and it failed
-  if the committed entry was evicted before the read resumed (reliable until now only because LRU
-  never evicts the most-recently-used entry). A second guard now closes it: the commit sequence is
-  captured before the off-lock read and, if it advanced by the time the lock is held, the current
-  persisted state is re-read under the lock instead of trusting the pre-lock snapshot. The common
-  cold-read path is unchanged (no extra I/O unless a commit actually raced). This also unblocks a
-  future `evictMemory()`.
-
-### Added — bounded negative cache
-
-- `negativeCache { maxEntries = … }` (default 512) LRU-bounds the failure memory, which was
-  otherwise unbounded — a wide key space of one-time failures (e.g. a search store hitting transient
-  errors on distinct queries) grew it by a record per key until `invalidateAll`. Bounding is
-  correctness-neutral: a negative record carries no value, so evicting one only re-permits an
-  (already epoch-fenced) fetch of that key — the sole cost is losing that key's stretched backoff
-  window. Eviction is least-recently-consulted and never privileges expired records (which carry the
-  consecutive-failure streak). This is the sound half of issue #13; bounding `keyEpochs` remains
-  deferred — the live-fetch refcount sketch is insufficient (it misses the `load`/`loadAll`/stream
-  capture sites), so a sound eviction needs an atomic-capture protocol proven by targeted
-  interleaving tests.
-
-### Added — multi-key Compose binding
-
-- `aquifer-compose` gains `collectAsStateMany(keys)` and `rememberStreamMany(keys)`, the multi-key
-  counterparts to `collectAsState(key)` / `rememberStream` (distinct-named, like the core
-  `stream`/`streamMany`, rather than overloading). They bind `Aquifer.streamMany` to one
-  lifecycle-aware `State<Map<K, DataState<V>>>` — a single collector for a whole list or grid screen
-  instead of a per-item collector that restarts as items scroll — with the member keys' initial
-  fetches batched into one call. The stream is remembered per `(aquifer, keys, freshness)` and keyed
-  on the `keys` set **by value**, so a fresh but equal set across recompositions reuses it; before
-  the first emission the state is an empty map. There is no `maxAge` knob, mirroring `streamMany`.
-  `previewAquifer` already backs `streamMany`, so multi-key `@Preview`s work with no extra wiring.
-
-### Added — SQLDelight persistence adapter
-
-- New `aquifer-persistence-sqldelight` module: `SqlDelightSourceOfTruth`, a queryable
-  `SourceOfTruth` over a SQLDelight/SQLite database. Values are stored as JSON
-  (`kotlinx.serialization`); keys via a bidirectional codec so the store is **enumerable**. It
-  implements the full bulk SPI (`readAll`/`deleteMany` as a single `IN`-clause statement,
-  `writeAll` as one transaction; bulk `IN`-clauses chunk under SQLite's bound-variable cap) and
-  `keys()`/`keysWhere()`, so `Aquifer.invalidateWhere` is disk-wide. Every operation is serialized
-  onto one connection, so the store is safe under the concurrent calls the `SourceOfTruth` contract
-  allows whatever driver you supply. The caller owns the schema lifecycle via the exposed `Schema`;
-  the generated database classes are an internal implementation detail (excluded from the locked
-  public API). Verified on the JVM SQLite driver, including file-backed concurrency and reopen.
-
-### Added — key-enumeration capability
-
-- `SourceOfTruth` gains optional `keys()` / `keysWhere(predicate)`, returning the stored keys (or
-  the matching subset) or `null` when the store cannot enumerate — the default, so existing stores
-  are unaffected. When a store can enumerate, `Aquifer.invalidateWhere` becomes **disk-wide**: its
-  predicate reaches every persisted key, not just those tracked in memory this run. A non-enumerable
-  store keeps today's in-process-only reach. Each matched key is fenced exactly as `invalidate`, so
-  a read already in flight can't resurrect a deleted entry. The `aquifer-persistence-file` store
-  opts out by design — its filenames are a one-way SHA-256 of the key. This shapes the queryable
-  persistence adapters (SQLDelight/DataStore), whose whole point is a correct disk-wide
-  `invalidateWhere`.
-
-### Added — bulk `SourceOfTruth` batching
-
-- `SourceOfTruth` gains optional `readAll(keys)`, `writeAll(entries)`, and `deleteMany(keys)`
-  methods that default to looping the per-key `read`/`write`/`delete`, so existing custom stores
-  keep working unchanged. The engine now routes `getAll`/`streamMany`/`prefetchAll` reads through
-  `readAll`, `putAll` through `writeAll`, and `invalidateWhere` through `deleteMany`, so a store
-  that overrides them does the batch in a single round-trip instead of N — letting a queryable
-  backend serve a multi-key read with one `IN` query. Batched reads keep the same epoch fencing as
-  the single-key path, so a `put`/`invalidate` racing the read never resurrects a deleted entry.
-  `JsonFileSourceOfTruth` overrides all three: `readAll` reads the batch under one I/O dispatch;
-  `writeAll` stages every entry to a fsynced temp file first and then commits all the renames under
-  one lock acquisition (recording and evicting per committed entry, so the on-disk and byte-budget
-  outcome matches the per-key path); and `deleteMany` deletes the whole set under one lock
-  acquisition. Together with #53's write/delete batching, these complete the two bulk SPI
-  capabilities the queryable persistence adapters need.
-
-### Added — HTTP fetcher seams and server-declared freshness
-
-- **`HttpException(code, url)`** (`aquifer-okhttp`): a response that is neither a success nor a
-  `304` now fails with a typed error carrying the status, instead of a bare `IOException` whose code
-  was only recoverable by parsing its message string. It still *is* an `IOException`, so with no
-  extra configuration it flows through the normal fetch-failure path (retry policy,
-  `DataState.Failure`, stale-if-error) exactly as before. What changes is that a resilience policy
-  can branch on the status: `retryOn = { it is HttpException && it.code >= 500 }` retries server
-  errors only and lets a `404` fail fast instead of burning every attempt. A `404` stays a fetch
-  *failure* either way — it is surfaced as `DataState.Failure`, never translated into a cache miss
-  or `DataState.Empty` — and any code reading that failure can discriminate the same way.
-- **`okHttpFetcher(callFactory, request, parse)`**: the plain (non-conditional) counterpart of
-  `okHttpConditionalFetcher`, for backends that don't speak `ETag`/`Last-Modified` and so have
-  nothing to revalidate against. A 2xx body goes to `parse`; any other status throws
-  `HttpException`. Like the conditional fetcher it cancels the call when the fetch's coroutine is
-  cancelled and always closes the response body.
-- **`Call.await()` is now public**: the suspend bridge both OkHttp fetchers already used internally
-  — enqueue on OkHttp's dispatcher (never blocking the caller's thread), cancel the call when the
-  awaiting coroutine is cancelled, and close a response that races in after cancellation so the
-  connection isn't leaked. Exposed so a hand-rolled fetcher can await a `Call` without
-  re-implementing that plumbing; the caller owns the returned `Response` and must close it.
-
-**Server-declared freshness** — the origin, not just the store, can now say how long a value lives:
-
-- `FetchResult.Fresh` gains `freshFor: Duration?`: a per-entry lifetime declared by the fetch. It is
-  persisted as the new `PersistedEntry.serverFreshForMillis` (a `Long` for on-disk format stability;
-  both the JSON file and SQLDelight stores write it, so the horizon survives process death) and is
-  carried forward across a `FetchResult.NotModified` — a 304 re-ages the entry off the new write
-  time while keeping the lifetime the origin last declared. Freshness precedence is per-call
-  `maxAge` > server `freshFor` > builder `timeToLive`, and server freshness is **never** jittered:
-  `ttlJitter` shapes only the store's own default, whose point is to spread expiries the store
-  itself invented. `Duration.ZERO` declares the value immediately stale on the next read; `null`
-  — the default, and what every existing fetcher returns — reduces to the previous behavior,
-  on-disk bytes included.
-- `okHttpConditionalFetcher(…, respectCacheControl = true)` (default `false`, so existing call sites
-  are untouched) derives that lifetime from a 2xx response's cache headers: `max-age` minus any
-  `Age`, `no-store`/`no-cache`/`max-age=0` as `Duration.ZERO`, and `Expires` measured against `Date`
-  as a fallback when no `max-age` directive is present. Every result is floored at zero; a header the
-  parser cannot use is absorbed rather than failing the fetch — an unparseable `Age` counts as zero
-  and an unparseable `Date` falls back to the response's receipt time, while a missing or unusable
-  `Expires` (with no `max-age`) leaves no opinion (`null`) — and shared-proxy directives
-  (`s-maxage`, `private`, …) are ignored — this is a private cache.
-
-### Added — encryption at rest (JsonFileSourceOfTruth)
-
-- `JsonFileSourceOfTruth` gains a `cipher: ValueCipher?` parameter (also on the
-  `jsonFileSourceOfTruth(...)` factory). `ValueCipher` is a two-method
-  `encrypt(plaintext, associatedData)` / `decrypt(ciphertext, associatedData)` seam applied to
-  each entry's serialized bytes, so sensitive values aren't stored as plaintext JSON. It depends
-  on nothing beyond the JDK, so production crypto — e.g. Google Tink's `Aead` backed by the
-  Android Keystore — plugs in through a thin adapter. The on-disk bytes (and the `maxBytes`
-  budget) are the ciphertext, so a nonce/tag is accounted for at its real size, and a `decrypt`
-  that throws `java.security.GeneralSecurityException` (wrong key, tampered or truncated file)
-  heals the slot and refetches like any other corrupt entry. The entry's key is passed as
-  authenticated associated data, binding each ciphertext to its key, so a blob relocated to a
-  different key's file on disk is rejected (and healed), not served as that key's value.
-  Encryption composes with bounding, conditional fetching (validators ride inside the encrypted
-  envelope), and `schemaVersion`/`migrate` (migration sees the decrypted tree). `null` (the
-  default) stores plaintext, unchanged.
-
-### Added — schema migration (JsonFileSourceOfTruth)
-
-- `JsonFileSourceOfTruth` gains `schemaVersion: Int = 0` and
-  `migrate: (fromVersion: Int, value: JsonElement) -> JsonElement?` (also on the
-  `jsonFileSourceOfTruth(...)` factory). A breaking model change — a removed or retyped field —
-  no longer means wiping the cache directory: stamp writes with a `schemaVersion` and supply a
-  `migrate` that rewrites an older entry's stored JSON to the current shape. Migration runs
-  lazily on read (the entry is rewritten in the new format the next time it is written) and only
-  for entries stored *below* the current version, which it receives so one callback can step
-  across several. Returning `null` drops the entry (healed away, then refetched), as does an
-  entry stored *above* the current version (an app downgrade), and a migrated tree that still
-  fails to decode. A version-0 store (the default) writes no version field and migrates nothing;
-  under the default `Json` (`encodeDefaults` off) that is byte-for-byte the previous on-disk
-  format, so existing caches and call sites are unaffected (a caller that enables `encodeDefaults`
-  emits `"schemaVersion":0`, as for any other defaulted field).
-
-### Added — stats (cache counters)
-
-- `Aquifer.stats(): CacheStats`: a non-suspending snapshot of per-store cache counters — `hits`,
-  `misses`, `evictions`, and the current `inFlight` fetch-registry gauge, plus derived `reads` and
-  `hitRate` — the aggregate numbers `AquiferEvents` can't give you, for hit-rate dashboards and
-  cache tuning. Like `snapshot()` it never suspends, never touches persistence, and is safe to
-  call on a closed store. A hit is a caller read (`get`/`getAll` per key, or a `stream`'s initial
-  emission) satisfied from cache under its requested `Freshness` without awaiting a fetch; a miss
-  is any other read — the policy needed a fetch (`NetworkFirst`/`NetworkOnly` always miss) or, for
-  `CacheOnly`, found nothing — background revalidation and `prefetch`/`prefetchAll` warmups aren't
-  counted. The preview and fake stores
-  report `CacheStats.EMPTY`.
-
-### Added — aquifer-test module
-
-- New published module `aquifer-test` with the unit-test utilities Aquifer uses on itself:
-  - `fakeAquifer(scope) { … }`: a programmable, in-memory `Aquifer` — the test-suite sibling of
-    `previewAquifer`. Script per-key `returns`/`failsWith`/`delays` (or a fallback `fetcher`),
-    `seed` a warm cache, then assert `fetchCount()`/`fetchCount(key)`/`fetchedKeys()`; responses
-    can be re-scripted at runtime (fail once, then succeed). It honours `Freshness` over a no-TTL
-    cache, fetches in `get`/`getAll`/`fresh` and on `prefetch`/`prefetchAll` (on the supplied
-    scope), and streams emit `Loading`/`Content`/`Failure`/`Empty`. Deterministic by design:
-    no time-to-live, no single-flight de-duplication (concurrent loads of a key each count),
-    streams report `Origin.MEMORY`, and `revalidateActive`/`revalidateOn` are no-ops.
-  - `FakeClock`: a manually advanced `WallClock` for driving staleness in tests of the real store.
-  - `settle()`: suspends long enough for fire-and-forget background work to run under `runTest`.
-
-### Added — snapshot (resident-key introspection)
-
-- `Aquifer.snapshot(): Set<K>`: a non-suspending peek at the keys currently resident in the
-  in-memory cache (`snapshot().size` is the live entry count), for debug overlays and eviction
-  tuning. It never suspends, never touches persistence, and is safe to call from anywhere —
-  including a closed store. It lists memory only (persisted-but-evicted keys aren't included) and
-  returns a stable copy, not a live view. Internally `MemoryCache` now guards its LRU map with a
-  plain monitor instead of a coroutine `Mutex` (its critical sections never suspend), matching the
-  rest of the engine's internal state and making the resident-key read non-suspending.
-
-### Added — invalidateWhere (predicate invalidation)
-
-- `Aquifer.invalidateWhere(predicate: (K) -> Boolean)`: the bulk middle ground between the surgical
-  `invalidate(key)` and the nuclear `invalidateAll()`, for "drop everything for this tenant/scope"
-  resets. Every matched key is dropped and fenced in one commit exactly as `invalidate` (memory and
-  persistence cleared, any in-flight fetch fenced off, negative-cache record cleared), and its
-  observers see the deletion the same way. The predicate is tested against the keys the store
-  currently tracks in the process (resident memory, active fetch-capable streams, in-flight fetches,
-  and negative-cache and write-epoch records) and runs outside the commit lock, so it must not call
-  back into the store. A `SourceOfTruth` can't enumerate its keys, so a key tracked in none of those
-  (a persisted entry evicted from memory and never re-touched, or one never loaded this run) is out
-  of reach — use `invalidateAll` for a full wipe regardless of what is loaded.
-
-### Added — putAll (bulk local write)
-
-- `Aquifer.putAll(entries: Map<K, V>)`: the bulk, write-side mirror of `getAll` — seed many keys
-  from a batch you fetched yourself in one fenced commit, instead of N separate `put` calls. Each
-  key is committed and fenced exactly as `put` (a fetch already in flight for it cannot overwrite
-  the new value, its negative-cache record is cleared, and persistence is written through), and
-  every active stream of a written key observes a single `Updated`. An empty map is a no-op.
-
-### Added — conditional batch fetching (RFC #29)
-
-- `conditionalBatchFetcher { validators: Map<K, String?> -> Map<K, FetchResult<V>> }`: the batch
-  mirror of `conditionalFetcher`, so ETag/304 revalidation composes with batched fetching. Each
-  requested key arrives mapped to its cached validator (an `ETag`/`Last-Modified` token, or
-  `null` when nothing usable is cached), and the fetcher answers per key with
-  `FetchResult.Fresh(value, validator)` or `FetchResult.NotModified` — a 304 keeps the cached
-  value and re-ages it, the payload never crossing the network.
-  `getAll`/`streamMany`/`prefetchAll` dispatch one call through it; an individual
-  `get`/`stream`/`prefetch` uses it as a batch of one (passing that key's validator, exactly as
-  `fresh()` does for a single conditional fetch).
-- A key absent from the returned map fails only that key (`BatchKeyMissingException`);
-  `NotModified` for a key with no cached validator is a contract violation that fails that key; a
-  throwing fetcher fails the whole batch and is retried by the store `retry` policy (whole-batch
-  retry), exactly like `batchFetcher`. Mutually exclusive with `fetcher`/`conditionalFetcher`/
-  `batchFetcher` (configure exactly one). The auto-coalescing window stays `batchFetcher`-only.
-
-### Added — streamMany, prefetchAll & whole-batch retry (batched fetching phase 2, RFC #29)
-
-- `streamMany(keys, freshness = StaleWhileRevalidate): Flow<Map<K, DataState<V>>>`: the reactive
-  twin of `getAll` — a combined flow that re-emits a per-key `DataState` map whenever **any**
-  member key changes, so a list screen renders per-item loading/content/failure coherently from a
-  single collection. The initial fetches of the member keys are batched into one `batchFetcher`
-  call, dispatched immediately (so it batches even without a coalescing window, like `getAll`);
-  without a batch fetcher the keys stream individually (still single-flight-deduped). An empty key
-  set yields a single empty map.
-- `prefetchAll(keys, freshness = CacheFirst)`: the batched, fire-and-forget mirror of `prefetch`
-  (and the write-free twin of `getAll`). Returns immediately; the keys that need loading (freshness
-  and the negative-cache gate decide) are warmed in one `batchFetcher` call in the store's scope.
-  `CacheOnly` is a no-op, a suppressed key stands down (except `NetworkOnly`), and failures are
-  never thrown — they surface through `AquiferEvents`.
-- Whole-batch retry: the store `retry` policy now wraps the multi-key `batchFetcher` call that
-  `getAll`/`streamMany`/`prefetchAll` issue, not just single-key fetches. A retryable transport
-  failure re-runs the **entire** batch (retry-all) with backoff, firing `onFetchRetried` for every
-  key in the batch and reporting the batch's attempt count through each key's `onFetchFailed`. A
-  key the fetcher *omits* from a successful map stays a definitive miss (`BatchKeyMissingException`)
-  and is never retried.
-  - **Behavioral change (pre-1.0):** a transient multi-key batch failure that previously dropped
-    the whole batch after a single attempt is now retried per the configured policy (the prior
-    release deferred this; the default no-retry policy is unaffected).
-- This completes RFC #29 phase 2.
-
-### Added — coalescing window (batched fetching phase 2, RFC #29)
-
-- `batchFetcher(coalesceWindow, maxBatchSize) { keys -> Map }`: with a positive
-  `coalesceWindow`, individual `get`/`stream`/`prefetch` fetches that land within the window
-  of each other are auto-batched into one backend call (DataLoader-style) — unchanged call
-  sites, fewer round-trips. The batch dispatches when the window elapses or once
-  `maxBatchSize` distinct keys accumulate. The default zero window keeps each single-key
-  fetch a batch of one; `getAll` always dispatches its own keys immediately.
-- A coalesced fetch is still covered by the store `retry` policy — a transient failure
-  re-enters the next window. Same-key loads in one window share a slot; a key the fetcher
-  omits fails only that key, a throwing fetcher fails that batch.
-
-### Added — batched fetching (phase 1, RFC #29)
-
-- `batchFetcher { keys: Set<K> -> Map<K, V> }` builder option: resolve many keys in one
-  backend call (the N+1 cure for list screens). Mutually exclusive with
-  `fetcher`/`conditionalFetcher` (configure exactly one). A key absent from the returned map
-  fails only that key (`BatchKeyMissingException`); a throwing batch fetcher fails the whole
-  batch. Single `get`/`stream`/`prefetch` use it as a batch of one.
-- `Aquifer.getAll(keys, freshness = CacheFirst): Map<K, V>`: resolves each key per its
-  freshness, gathers the keys that need fetching into one `batchFetcher` call (joining any
-  in-flight single fetch), and returns the **resolved subset** — a per-key failure is omitted
-  rather than thrown, so one bad key never sinks the screen (its error still reaches
-  `AquiferEvents`). Stale-if-error falls back to cached values. Without a `batchFetcher`,
-  keys are fetched individually (still single-flight-deduped). Every per-key guarantee
-  (fencing, negative caching, persistence, events) is unchanged — batching is purely a
-  fetch-transport optimization.
-- Retry scope: the store `retry` policy wraps each single-key fetch (including a `get`'s
-  batch-of-one over a `batchFetcher`) but not the multi-key call `getAll` issues — put retry
-  inside the `batchFetcher` if needed. Whole-batch retry, the coalescing window that
-  auto-batches individual fetches, and `streamMany(keys)` are Phase 2 (a follow-up PR).
-
-### Added — prefetch
-
-- `Aquifer.prefetch(key, freshness = CacheFirst)`: fire-and-forget cache warmup for
-  predictable navigation. Returns immediately; the fetch runs in the store's scope and its
-  result lands in the cache for the next `get`/`stream`. Honours the freshness fetch
-  decision (a still-fresh entry triggers no fetch), shares a single in-flight fetch with any
-  concurrent `get`/`stream`/`prefetch` of the same key, stands down while a key is
-  negative-cached (except `NetworkOnly`, the explicit-demand strategy), is a no-op for
-  `CacheOnly`, and never throws *fetch failures* to the caller — they surface through
-  `AquiferEvents` (calling on a closed store still throws `IllegalStateException`, like every
-  other member).
-
-### Added — TTL jitter
-
-- `ttlJitter` (in `[0, 1]`) on `freshness { }`: each entry's effective time-to-live is
-  deterministically shortened by a factor derived from its key and write timestamp, spreading
-  the expiries of entries fetched together so they don't all revalidate at once — the
-  request-stampede mirror of retry jitter. Shorten-only (`timeToLive` stays the hard upper
-  bound), stable per entry (no fresh/stale flickering; the verdict also survives restarts
-  for keys with value-based `hashCode`s — the norm), and per-call `maxAge` overrides are
-  never jittered. 0 (default) disables it.
-
-### Added — negative caching
-
-- `negativeCache { }` on the builder: terminal fetch failures are remembered per key for
-  `timeToLive`, during which strategy-driven refetches (`CacheFirst`, `StaleWhileRevalidate`,
-  `NetworkFirst`, `revalidateActive`, new stream subscriptions) are suppressed — reads serve
-  the cached value when one exists (stale-if-error without re-asking the network) and
-  otherwise fail fast with the remembered error. `NetworkOnly`/`fresh()` deliberately bypass
-  the memory; success, `put`, and `invalidate` clear it. Disabled unless configured.
-- Backoff memory: consecutive failures (no intervening success or mutation) stretch the
-  window by `backoffMultiplier`, capped at `maxTimeToLive` — window expiry re-allows
-  fetching but never resets the streak.
-- New `AquiferEvents.onFetchSuppressed(key, error, remaining)` reports each suppressed read.
-
-### Added — conditional fetching (ETag / Last-Modified)
-
-- `conditionalFetcher { key, validator -> FetchResult }` on the builder: the fetcher
-  receives the cached entry's opaque validator (an `ETag`, `Last-Modified` value, or any
-  token from a previous `FetchResult.Fresh`) and may answer `FetchResult.NotModified` — the
-  store keeps the cached value, refreshes its age so TTL decisions start over, and the
-  payload never crosses the network. Plain `fetcher { }` stores are untouched, including
-  their exact fetch path (no pre-fetch entry read). Configure exactly one of the two.
-- Validators live in memory and in `PersistedEntry` (new defaulted `validator` field —
-  binary-breaking pre-1.0, source-compatible), and the JSON file store persists them:
-  revalidation stays cheap across process restarts, and pre-validator cache files decode
-  as `validator = null`.
-- **`aquifer-okhttp`** (new module): `okHttpConditionalFetcher(callFactory, request, parse)`
-  wires the headers automatically — captures `ETag`/`Last-Modified` from responses, replays
-  `If-None-Match`/`If-Modified-Since`, maps 304 to `NotModified`, and fails non-2xx through
-  Aquifer's normal retry/failure path.
-- Local `put`s store no validator, so the first fetch after a local edit is unconditional
-  by construction; `NotModified` without a cached entry fails the fetch (fetcher contract
-  violation).
-- Release workflow: the tag-vs-version gate now covers `aquifer-compose` (previously
-  missed) and the new `aquifer-okhttp`.
-
-### Added — Compose integration & DataState ergonomics
-
-**`aquifer-compose`** (new module)
-
-- `Aquifer.collectAsState(key, freshness, …)`: lifecycle-aware Compose collection of a key's
-  stream, remembered across recompositions, starting from `Loading(null)`.
-- `Aquifer.rememberStream(key, freshness)`: the remembered raw stream for custom operators.
-- `previewAquifer(vararg entries)`: a fetch-free store for `@Preview`s and UI tests, with
-  live `put`/`invalidate` behavior for interactive previews.
-
-**`aquifer-core`**
-
-- `DataState` extensions: `isLoading`, `valueOrThrow()`, `map`, `onContent`, `onFailure`.
-
-### Added — `DataState.Empty` (observable deletion, RFC #23)
-
-- New sealed member `DataState.Empty`: the store affirmatively has no value and the
-  stream's strategy will not fetch one. Emitted only to `CacheOnly` streams — on initial
-  collection of a missing key, and when the key is dropped by `invalidate`/`invalidateAll`
-  while the stream is active. Cache-only screens now observe logout-style resets instead of
-  rendering deleted data forever. Fetch-capable streams are unchanged (their refetch's
-  `Loading(null)` already communicates the deletion). `previewAquifer` streams missing keys
-  as `Empty` too.
-- **Breaking (pre-1.0), source**: every exhaustive `when` over `DataState` needs an
-  `is DataState.Empty ->` branch.
-- **Breaking (pre-1.0), behavioral**: a `CacheOnly` stream of a missing key emits `Empty`
-  where it previously emitted `Failure(CacheMissException)` — nothing failed, so it is no
-  longer reported as a failure. One-shot `get(key, CacheOnly)` still throws
-  `CacheMissException`.
-- `map` passes `Empty` through; `valueOrThrow()` throws `NoSuchElementException` on it;
-  `onContent`/`onFailure` ignore it.
-
-### Added — bounded disk store
-
-- `JsonFileSourceOfTruth` accepts optional `maxEntries`/`maxBytes` caps (constructor and
-  `jsonFileSourceOfTruth` factory), enforced by least-recently-used eviction after every
-  write. Recency is exact within a process (reads count as use) and seeds from file
-  modification times across restarts; a store found over budget on first use — say, after
-  caps were lowered in an update — is trimmed immediately. The byte cap is absolute: an
-  entry larger than `maxBytes` on its own is not retained. Unbounded remains the default
-  and adds no per-operation locking or accounting — just the one-time temp GC below and a
-  per-call flag check.
-- Temp files orphaned by a crash mid-write are now garbage-collected the first time a store
-  touches the filesystem (previously only `deleteAll` removed them), bounded or not.
-
-### Added — per-call freshness
-
-- `maxAge` parameter on `Aquifer.get`, `Aquifer.stream`, and Compose's
-  `collectAsState`/`rememberStream`: a per-call override of the store's time-to-live.
-  Fetch decisions change only for the staleness-aware strategies (`CacheFirst`,
-  `StaleWhileRevalidate`) — `CacheOnly`, `NetworkFirst`, and `NetworkOnly` fetch exactly as
-  before — but a stream's `isStale` flags follow the caller's `maxAge` under every strategy.
-  `Duration.INFINITE` is allowed and means "serve anything cached, fetch only on miss".
-  Implementor note: the `Aquifer` interface methods gained a parameter (source-breaking for
-  custom implementations, pre-1.0).
-
-### Tooling
-
-- Toolchain refresh (supersedes the Dependabot group bump): Gradle 9.5.1, Kotlin 2.4.0,
-  coroutines 1.11.0, serialization 1.11.0, Dokka 2.2.0, vanniktech maven-publish 0.36.0
-  (with the required AGP 8.13.0 companion), Robolectric 4.16.1, molecule 2.2.0. JUnit stays
-  on the 5.x line: JUnit 6 ships JVM-17+ variants only, incompatible with the library's
-  deliberate JVM 11 target — documented in the version catalog, and Dependabot now ignores
-  junit-bom majors.
-
-- Static analysis: detekt 1.23.8 (including the ktlint formatting ruleset) runs on every
-  module as part of `check`/`build` with `maxIssues: 0`. The codebase is finding-free; the
-  handful of deliberate engine patterns (catch-everything fences, the cohesive engine class)
-  carry justified local suppressions.
-
-### Hardening, round two (post-review fixes, pre-0.1.0)
-
-- **Persistence hydration is now epoch-fenced like fetch commits**: a `SourceOfTruth.read`
-  suspended across `invalidate`/`invalidateAll` can no longer put the deleted entry back
-  into the memory cache, and memory is re-checked under the commit lock so a fetch commit
-  that races the storage read is never overwritten by the older disk snapshot. The hot
-  memory path still never takes the commit lock.
-- **Stream ordering is clock-independent**: events carry a store-global commit sequence
-  (assigned under the commit guard) instead of relying on `writtenAtMillis`, so same-
-  millisecond ties and backwards wall-clock steps can neither reorder nor silence updates.
-- A hydrated disk snapshot evicted by LRU pressure before its stream subscribes is no longer
-  dropped: an unchanged epoch proves the gap was eviction, not invalidation.
-- A failing revalidation *sweep* (e.g. a throwing storage read) no longer ends the
-  `revalidateOn` subscription; only a failure of the trigger flow itself does. Both are
-  reported via `AquiferEvents.onRevalidationTriggerFailed`, whose docs now say so.
-- Docs: single-flight dedup is per-epoch (a mutation during a fetch can briefly overlap two
-  requests for one key); the file store's new-entry durability after a crash is best-effort
-  (no directory fsync) while the previous-entry guarantee stands.
-
-### Hardening (post-review fixes, pre-0.1.0)
-
-- **Mutation fencing**: `put`/`invalidate`/`invalidateAll` now fence off fetches that were
-  already in flight — their responses can no longer resurrect invalidated data (memory *and*
-  persistence) or clobber newer local writes, and post-invalidation stream refetches start
-  genuinely new requests instead of joining the doomed one.
-- A throwing `revalidateOn` trigger no longer escapes as an uncaught exception (an app crash
-  on Android); it ends only its own subscription and is reported via the new
-  `AquiferEvents.onRevalidationTriggerFailed`.
-- A store whose parent scope is cancelled now reports itself closed: in-flight `get`s fail
-  with `AquiferException` instead of silently cancelling the caller's coroutine, and
-  subsequent calls fail fast instead of hanging.
-- Stream startup no longer performs storage I/O while subscribed to the update bus, so a slow
-  `SourceOfTruth.read` can no longer stall writers and fetch completions store-wide; bus
-  events buffered across the snapshot can no longer regress a collector to an older value.
-- True API 21 compatibility: replaced `ConcurrentHashMap.merge`/`computeIfPresent`
-  (Android API 24+) with CAS loops; documented that `aquifer-persistence-file` requires
-  API 26+ or NIO desugaring.
-- `JsonFileSourceOfTruth` fsyncs before its atomic rename, making the crash-safety claim hold
-  on journaling filesystems.
-- `aquifer-android` now exposes `androidx.lifecycle` as an `api` dependency (it appears in
-  public signatures); release builds skip duplicate unit-test runs.
-- The release workflow's version gate now covers `aquifer-android` too.
-
-### Added — 0.1.0 scope
-
-**`aquifer-core`**
-
-- `Aquifer<K, V>`: keyed, offline-first single source of truth with `stream`, `get`, `fresh`,
-  `put`, `invalidate`, `invalidateAll`, `revalidateActive`, `revalidateOn`, and `close`.
-- `DataState` stream snapshots (`Loading` / `Content` / `Failure`) that always carry the last
-  known value, plus `Origin` (`MEMORY` / `PERSISTENCE` / `FETCHER` / `LOCAL`).
-- Five `Freshness` strategies: `CacheOnly`, `CacheFirst`, `StaleWhileRevalidate`,
-  `NetworkFirst`, `NetworkOnly`.
+## [0.1.0] - 2026-07-29
+
+First public release. Aquifer is an offline-first, stale-while-revalidate caching data layer for
+Kotlin/JVM and Android: you declare *how to fetch* and *how fresh data must be*, and the store
+decides when to serve the cache, when to hit the network, and keeps every observer of a key in
+sync. Seven modules publish to Maven Central; the public API of each is locked by binary
+compatibility validation.
+
+There is no `Changed` or `Fixed` section below: nothing preceded this release, so everything it
+contains is new. Behaviour changes and race fixes made while iterating toward it were never
+present in a published artifact and are not release notes.
+
+### Added
+
+**`aquifer-core` — the store**
+
+- `Aquifer<K, V>`, a keyed single source of truth. Reads: `stream(key)`, `streamMany(keys)`,
+  `get(key)`, `getAll(keys)`, `fresh(key)`. Writes and invalidation: `put`, `putAll`,
+  `invalidate`, `invalidateWhere(predicate)`, `invalidateAll`. Warmup: `prefetch`,
+  `prefetchAll`. Revalidation: `revalidateActive()`, `revalidateOn(trigger)`. Introspection:
+  `snapshot()`, `stats()`. Memory management: `evictMemory()`, `trimToSize(n)`. Lifecycle:
+  `close()`.
+- `DataState` stream snapshots — `Loading` / `Content` / `Failure` / `Empty` — that always carry
+  the last known value, plus `Origin` (`MEMORY` / `PERSISTENCE` / `FETCHER` / `LOCAL`) and
+  `isStale`. `Empty` is an affirmative "nothing here, and nothing will fetch it", emitted to
+  `CacheOnly` streams on a missing key and when a key is dropped while the stream is active, so
+  cache-only screens observe logout-style resets instead of rendering deleted data forever.
+  Extensions: `isLoading`, `valueOrThrow()`, `map`, `onContent`, `onFailure`.
+- Five `Freshness` strategies — `CacheOnly`, `CacheFirst`, `StaleWhileRevalidate`, `NetworkFirst`,
+  `NetworkOnly` — chosen per call rather than per architecture.
 - `aquifer { }` builder DSL: `fetcher`, `freshness`, `memoryCache`, `persistence`, `retry`,
-  `events`, `clock`, `scope`.
-- Per-key single-flight deduplication; fetches run in the store's scope and survive caller
-  cancellation.
-- Update bus keeping every active stream of a key coherent, with per-collector isolation so a
-  stalled collector can never block the engine.
-- Bounded LRU memory cache with TTL-aware staleness via an injectable `WallClock`.
-- `SourceOfTruth` persistence abstraction: hydration on memory misses, persisted timestamps,
-  best-effort write-through after fetches, all-or-nothing direct mutations.
-- Opt-in retries: exponential backoff, hard `maxDelay` cap, delay-shortening jitter,
-  `retryOn` predicate; cancellation is never retried.
-- `AquiferEvents` observability hooks: fetch started/succeeded/retried/failed and persistence
-  write failures.
+  `negativeCache`, `events`, `clock`, `scope`.
+- **Epoch fencing.** Every `put`/`invalidate`/`invalidateAll` advances a per-key epoch, and every
+  fetch captures its epoch *before* it registers, so a response already in flight cannot resurrect
+  a value that was just deleted or overwrite a newer local write — it is discarded at commit time.
+  Persistence hydration is fenced the same way. Post-invalidation stream refetches start genuinely
+  new requests rather than joining the doomed one.
+- **Per-key single-flight deduplication.** Concurrent `get`/`stream`/`prefetch` of a key share one
+  in-flight fetch. Dedup is per-epoch: a mutation during a fetch can briefly overlap two requests
+  for one key, by design.
+- Fetches run in the store's own scope, so navigating away mid-request still lands the response in
+  the cache. Cancelling the injected scope closes the store: awaiting callers get an
+  `AquiferException` rather than a silent cancellation of their own coroutine.
+- An update bus keeps every active stream of a key coherent, with an unbounded per-collector
+  buffer so a stalled collector can never block fetch completion, writes, or other streams. Stream
+  ordering is clock-independent — events carry a store-global commit sequence assigned under the
+  commit guard, so same-millisecond ties and backwards wall-clock steps can neither reorder nor
+  silence updates. Stream startup performs no storage I/O while subscribed to the bus.
+- A bounded LRU memory cache with staleness judged against an injectable `WallClock`.
+- Exceptions: `AquiferException` (base), `CacheMissException` (thrown by `get(key, CacheOnly)` with
+  nothing cached; streams emit `DataState.Empty` instead), and `BatchKeyMissingException` (a batch
+  fetcher omitted a requested key — it fails that key alone).
+- True API 21 compatibility: no `java.util` methods added in API 24, and every module compiles to
+  JVM 11 bytecode.
+
+**Freshness and staleness**
+
+- `freshness { timeToLive }` sets the store-wide entry lifetime. It defaults to
+  `Duration.INFINITE` — cache until told otherwise — so a store whose data changes upstream should
+  set one.
+- A per-call `maxAge` on `get`/`stream` (and Compose's `collectAsState`/`rememberStream`) overrides
+  it. Fetch decisions change only for the staleness-aware strategies; `isStale` follows the
+  caller's `maxAge` under every strategy.
+- `FetchResult.Fresh.freshFor` lets the *origin* declare a per-entry lifetime, persisted alongside
+  the value (as `PersistedEntry.serverFreshForMillis`) so the horizon survives process death, and
+  carried across a `NotModified` — a 304 re-ages the entry while keeping the lifetime the origin
+  last declared.
+- Precedence is per-call `maxAge` > server `freshFor` > store `timeToLive`.
+- `freshness { ttlJitter }` (in `[0, 1]`) deterministically shortens each entry's effective TTL by
+  a factor derived from its key and write timestamp, spreading the expiries of entries fetched
+  together — the request-stampede mirror of retry jitter. Shorten-only, stable per entry, and never
+  applied to a per-call `maxAge` or to server-declared freshness.
+
+**Fetching**
+
+- `fetcher { key -> value }` for the simple case.
+- `conditionalFetcher { key, validator -> FetchResult }` for `ETag`/`Last-Modified` revalidation:
+  the fetcher receives the cached entry's opaque validator and may answer `FetchResult.NotModified`,
+  keeping the cached value and refreshing its age without the payload crossing the network.
+  Validators are persisted, so revalidation stays cheap across restarts. A local `put` stores no
+  validator, so the first fetch after a local edit is unconditional by construction.
+- `batchFetcher { keys -> Map }` resolves many keys in one backend call — the N+1 cure for list
+  screens. `getAll`/`streamMany`/`prefetchAll` dispatch one call through it; a single
+  `get`/`stream`/`prefetch` uses it as a batch of one.
+- `batchFetcher(coalesceWindow, maxBatchSize) { … }` additionally auto-batches individual fetches
+  that land within the window of each other (DataLoader-style) — unchanged call sites, fewer
+  round-trips. The batch dispatches when the window elapses or once `maxBatchSize` distinct keys
+  accumulate.
+- `conditionalBatchFetcher { validators -> Map<K, FetchResult> }` composes the two.
+- Configure exactly one of the four. A key absent from a returned map fails only that key; a
+  throwing batch fetcher fails the whole batch, which the `retry` policy then re-runs in full,
+  firing `onFetchRetried` for every key in it.
+- `getAll` returns the **resolved subset** — a per-key failure is omitted rather than thrown, so one
+  bad key never sinks a screen — and falls back to cached values on failure.
+
+**Persistence**
+
+- `SourceOfTruth<K, V>`: the persistence SPI. Required `read`/`write`/`delete`; optional
+  `readAll`/`writeAll`/`deleteMany` (defaulting to per-key loops) so a queryable backend can serve
+  a multi-key read in one round-trip; optional `keys()`/`keysWhere(predicate)` for enumeration.
+- `PersistedEntry` carries the value, its write timestamp, its validator, and any server-declared
+  freshness, so staleness and conditional revalidation both survive process death.
+- Hydration on memory misses, best-effort write-through after fetches, and all-or-nothing direct
+  mutations.
+- When a store can enumerate, `invalidateWhere` becomes **disk-wide** — its predicate reaches every
+  persisted key, not just those tracked in memory this run. A non-enumerable store (the default)
+  keeps in-process reach; use `invalidateAll` for a full wipe. The predicate runs outside the commit
+  lock, so it must not call back into the store.
+
+**Resilience**
+
+- `retry { }`: opt-in exponential backoff with a hard `maxDelay` cap, delay-shortening jitter, and a
+  `retryOn` predicate. Cancellation is never retried. The policy wraps single-key fetches and
+  whole-batch calls alike.
+- `negativeCache { }`: terminal fetch failures are remembered per key for `timeToLive`, during which
+  strategy-driven refetches are suppressed — reads serve a cached value when one exists
+  (stale-if-error without re-asking the network) and otherwise fail fast with the remembered error.
+  `NetworkOnly`/`fresh()` deliberately bypass it; success, `put`, and `invalidate` clear it.
+  Consecutive failures stretch the window by `backoffMultiplier`, capped at `maxTimeToLive`.
+  `maxEntries` (default 512) LRU-bounds the failure memory, evicting least-recently-consulted;
+  bounding is correctness-neutral, since a negative record carries no value.
+- Stale-if-error: a failed fetch with a usable cached value serves the value and surfaces the error
+  alongside it, rather than a blank screen.
+
+**Observability and introspection**
+
+- `AquiferEvents<K>`: `onFetchStarted`, `onFetchSucceeded`, `onFetchRetried`, `onFetchFailed`,
+  `onFetchSuppressed`, `onPersistenceWriteFailed`, `onRevalidationTriggerFailed`. A failing
+  revalidation *sweep* is reported without ending the `revalidateOn` subscription; only a failure of
+  the trigger flow itself ends it, and a throwing trigger never escapes as an uncaught exception.
+- `snapshot(): Set<K>` — the keys currently resident in memory, as a stable copy.
+- `stats(): CacheStats` — `hits`, `misses`, `evictions`, the live `inFlight` gauge, plus derived
+  `reads` and `hitRate`. A hit is a caller read satisfied from cache under its requested `Freshness`
+  without awaiting a fetch; background revalidation and prefetch warmups aren't counted.
+- `evictMemory()` and `trimToSize(n)` shed the in-memory tier, for wiring a long-lived store to
+  Android's `onLowMemory()`/`onTrimMemory(level)`. Memory-only: persistence is untouched, so each
+  dropped key rehydrates from disk on its next read with no fetch and unchanged staleness.
+- `snapshot()`, `stats()`, `evictMemory()` and `trimToSize()` never suspend, never touch
+  persistence, and stay callable on a closed store.
+
+**`aquifer-compose`**
+
+- `Aquifer.collectAsState(key, freshness, maxAge)` — lifecycle-aware Compose collection of a key's
+  stream, remembered across recompositions, starting from `Loading(null)`.
+- `Aquifer.collectAsStateMany(keys, freshness)` — the multi-key counterpart, binding `streamMany` to
+  one `State<Map<K, DataState<V>>>`: a single collector for a whole list or grid instead of a
+  per-item collector that restarts as items scroll, with the member keys' initial fetches batched
+  into one call. Keyed on the `keys` set by value, so an equal set across recompositions reuses the
+  stream; the state is an empty map before the first emission.
+- `rememberStream(key, …)` / `rememberStreamMany(keys, …)` expose the remembered raw streams for
+  custom operators.
+- `previewAquifer(vararg entries)` — a fetch-free store for `@Preview`s and UI tests, with live
+  `put`/`invalidate` behaviour for interactive previews, and `streamMany` support so multi-key
+  previews work with no extra wiring.
 
 **`aquifer-android`**
 
-- `Context.connectivityRestoredFlow()` and `Aquifer.revalidateOnReconnect(context)`:
-  ConnectivityManager-backed offline→online trigger that ignores already-present connectivity
-  and Wi-Fi↔cellular handovers; `ACCESS_NETWORK_STATE` is declared in the library manifest.
-- `appForegroundedFlow()` and `Aquifer.revalidateOnAppForeground()`: ProcessLifecycleOwner-
-  backed background→foreground trigger that ignores the app launch itself.
+- `Context.connectivityRestoredFlow()` and `Aquifer.revalidateOnReconnect(context)` — a
+  ConnectivityManager-backed offline→online trigger that ignores already-present connectivity and
+  Wi-Fi↔cellular handovers. `ACCESS_NETWORK_STATE` is declared in the library manifest.
+- `appForegroundedFlow()` and `Aquifer.revalidateOnAppForeground()` — a ProcessLifecycleOwner-backed
+  background→foreground trigger that ignores the app launch itself.
 
 **`aquifer-persistence-file`**
 
-- `JsonFileSourceOfTruth`: one JSON file per key via kotlinx.serialization, SHA-256 file
-  naming, atomic writes, self-healing reads for corrupt files, forward-compatible JSON
-  defaults.
-- `jsonFileSourceOfTruth()` factory with reified serializer lookup.
+- `JsonFileSourceOfTruth` / `jsonFileSourceOfTruth()` — one JSON file per key via
+  kotlinx.serialization, with SHA-256 file naming, atomic fsynced writes, self-healing reads for
+  corrupt files, and forward-compatible JSON defaults. Implements the full bulk SPI.
+- Optional `maxEntries`/`maxBytes` caps enforced by LRU eviction after every write. Recency is exact
+  within a process and seeds from file modification times across restarts; a store found over budget
+  on first use is trimmed immediately. Unbounded is the default and adds no per-operation
+  accounting. Temp files orphaned by a crash mid-write are garbage-collected on first filesystem
+  touch.
+- `schemaVersion` + `migrate(fromVersion, json)` — a breaking model change no longer means wiping the
+  cache directory. Migration runs lazily on read, only for entries stored below the current version,
+  and returning `null` drops the entry. A version-0 store (the default) is byte-for-byte the
+  unversioned format.
+- `cipher: ValueCipher?` — encryption at rest. A two-method `encrypt`/`decrypt` seam applied to each
+  entry's serialized bytes, depending on nothing beyond the JDK, so production crypto (e.g. Tink's
+  `Aead` over the Android Keystore) plugs in through a thin adapter. The entry's key is passed as
+  authenticated associated data, so a blob relocated to another key's file is rejected and healed
+  rather than served. Composes with bounding, migration, and conditional fetching.
+- Requires API 26+ or NIO core-library desugaring (it is built on `java.nio.file`). It cannot
+  enumerate keys by design — its filenames are a one-way hash.
+
+**`aquifer-persistence-sqldelight`**
+
+- `SqlDelightSourceOfTruth` — a queryable `SourceOfTruth` over SQLDelight/SQLite. Values stored as
+  JSON, keys via a bidirectional codec so the store is **enumerable** and `invalidateWhere` is
+  disk-wide. Implements the full bulk SPI (`readAll`/`deleteMany` as a single `IN`-clause statement,
+  `writeAll` as one transaction, chunked under SQLite's bound-variable cap). Every operation is
+  serialized onto one connection, so the store is safe under the concurrency the SPI allows whatever
+  driver you supply. The caller owns the schema lifecycle via the exposed `Schema`.
+
+**`aquifer-okhttp`**
+
+- `okHttpConditionalFetcher(callFactory, request, parse)` — wires conditional fetching
+  automatically: captures `ETag`/`Last-Modified`, replays `If-None-Match`/`If-Modified-Since`, and
+  maps 304 to `NotModified`.
+- `respectCacheControl = true` (default `false`) additionally derives server-declared freshness from
+  a 2xx response's cache headers: `max-age` minus `Age`, `no-store`/`no-cache`/`max-age=0` as
+  `Duration.ZERO`, and `Expires` against `Date` as a fallback. Unusable headers are absorbed rather
+  than failing the fetch; shared-proxy directives are ignored, since this is a private cache.
+- `okHttpFetcher(callFactory, request, parse)` — the plain counterpart, for backends that don't
+  speak validators.
+- `HttpException(code, url)` — a typed failure carrying the status. It *is* an `IOException`, so it
+  flows through the normal retry/failure path unchanged, but a policy can now branch on the status:
+  `retryOn = { it is HttpException && it.code >= 500 }` retries server errors and lets a `404` fail
+  fast. A `404` remains a fetch failure, never a cache miss.
+- `Call.await()` — the public suspend bridge both fetchers use: enqueues on OkHttp's dispatcher
+  without blocking the caller's thread, cancels the call when the awaiting coroutine is cancelled,
+  and closes a response that races in after cancellation. The caller owns the returned `Response`.
+
+**`aquifer-test`**
+
+- `fakeAquifer(scope) { … }` — a programmable, in-memory `Aquifer` for unit-testing repositories
+  that depend on one. Script per-key `returns`/`failsWith`/`delays` (or a fallback `fetcher`), `seed`
+  a warm cache, then assert `fetchCount()`/`fetchCount(key)`/`fetchedKeys()`; responses can be
+  re-scripted at runtime. Deterministic by design: no TTL, no single-flight dedup, and
+  `revalidateActive`/`revalidateOn` are no-ops.
+- `FakeClock` — a manually advanced `WallClock` for driving staleness in tests of the real store.
+- `settle()` — a `TestScope` extension that drains every task scheduled at the current virtual time,
+  so fire-and-forget effects can be asserted on. It does not advance virtual time; delay-gated work
+  needs `advanceTimeBy(...)`.
+
+### Toolchain
+
+- Kotlin 2.4.10, Gradle 9.5.1, coroutines 1.11.0, serialization 1.11.0, Dokka 2.2.0, AGP 8.13.0,
+  Robolectric 4.16.1, molecule 2.2.0. JUnit stays on the 5.x line: JUnit 6 ships JVM-17+ variants
+  only, incompatible with the deliberate JVM 11 target.
+- detekt 1.23.8 (including the ktlint formatting ruleset) runs on every module as part of
+  `check`/`build` with `maxIssues: 0`.
+- CI builds and tests on JDK 17 and 21, runs the JVM modules' tests on a real JDK 11 runtime to prove
+  the bytecode target, and model-checks the concurrent primitives with Lincheck.
+
+[Unreleased]: https://github.com/QuasarApps/aquifer/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/QuasarApps/aquifer/releases/tag/v0.1.0

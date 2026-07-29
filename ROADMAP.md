@@ -25,20 +25,14 @@ a locked public API of 55 types and 284 non-synthetic members across seven
 `implementation("io.github.quasarapps:…")` against this library, hit a POM problem, or argued
 with a default. Every API decision so far — including the ones about to be frozen at 1.0 — was
 made against imagined users, which makes the freeze docket below guesswork until real ones exist.
-Shipping 0.1.0 is the highest-leverage remaining action on this file, and the first item is
-what stands between here and the tag.
+Shipping 0.1.0 is the highest-leverage remaining action on this file, and every engineering
+blocker is now clear: what remains before the tag is owner action — the four signing secrets and
+the version bump off `-SNAPSHOT`.
 
-- [ ] **Collapse `[Unreleased]` into a dated `0.1.0` section** — the changelog carries 27
-  separate `### Added` blocks under one `[Unreleased]` heading: a per-PR work log rather than
-  release notes, and self-contradictory when read as a whole (the oldest entry, at the bottom,
-  describes `DataState` as `Loading`/`Content`/`Failure`, while a newer one above it adds `Empty`).
-  Rewrite it as one dated `0.1.0` section grouped Added/Changed/Fixed, describing the surface as it
-  actually ships rather than the deltas that got there — and drop the pre-release `Fixed` entries
-  for races no published version ever had. The #48–#51 backfill is done; the collapse is what
-  remains. The tag's release notes are cut from this section, so it is a blocker too. *(S)*
 - [ ] **Publish v0.1.0 to Maven Central** — add the four secrets from
-  [CONTRIBUTING](CONTRIBUTING.md), bump the (newly single) version off `-SNAPSHOT`, date the
-  CHANGELOG, push `v0.1.0`; the guarded release workflow does the rest. *(owner action — S)*
+  [CONTRIBUTING](CONTRIBUTING.md), bump the (newly single) `version` in `gradle.properties` off
+  `-SNAPSHOT`, confirm the `0.1.0` CHANGELOG date still matches the tag date, push `v0.1.0`; the
+  guarded release workflow does the rest. *(owner action — S)*
 - [ ] **Cut a GitHub Release from the tagged CHANGELOG** — the release workflow ends at
   `publishAndReleaseToMavenCentral`, so a `v*` tag produces artifacts and nothing a watcher can
   see: no release entry, no notes, no diff link. Generate the release in the same job from the
@@ -107,6 +101,17 @@ what stands between here and the tag.
   the trap before consumers inherit it. The signature change was made while free (nothing
   published); `kotlinx-coroutines-test` joins the module's `api` surface, since the receiver type is
   public API. *(S)*
+- [x] **Collapse `[Unreleased]` into a dated `0.1.0` section** (shipped) — the changelog was 27
+  separate `### Added` blocks under one `[Unreleased]` heading: a per-PR work log rather than release
+  notes, and self-contradictory read end to end (the oldest entry described `DataState` as
+  `Loading`/`Content`/`Failure` while a newer one above it added `Empty`). It is now one
+  `[0.1.0] - 2026-07-29` section describing the surface as it ships, organised by module, at 246
+  lines rather than 543. Every claim was checked against the locked `*.api` dumps rather than carried
+  over from the prose. The planned Added/**Changed**/**Fixed** grouping turned out to be wrong for a
+  *first* release: those categories are relative to a previous version, and there is none — every
+  `Fixed` entry described a race no published artifact ever had, and every "breaking (pre-release)"
+  note a delta against an unpublished state. Both are stated as absent and why, and the shipped
+  guarantees they described are folded into the surface description. *(S)*
 
 ## 0.2 — Compose & everyday ergonomics
 
