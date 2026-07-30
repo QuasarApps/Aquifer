@@ -55,6 +55,19 @@ handles everything else.
   in the same PR. The changelog is where a user learns what a release added, so API that lands
   without an entry is invisible until someone diffs the `api/*.api` dumps.
 - CI must be green: build, tests, and `apiCheck` all run on every PR.
+- **Expand the collapsed part of an automated review.** Copilot files some findings as *"comments
+  suppressed due to low confidence"*. Those live only inside a `<details>` block in the review body:
+  they create **no review thread**, so they cannot be resolved, never appear as outstanding, and
+  leave no trace that they were raised at all. Everything filed as a thread is tracked by GitHub
+  whether or not anyone is diligent; these are tracked only by someone remembering to look. Triage
+  them like any other comment.
+
+  The label is not a good guide to whether they matter. On #80 all four suppressed findings were
+  correct, and the most consequential comment in that PR was among them — it caught documentation
+  telling readers to call `invalidate(key)` in response to an external write, which would have
+  *deleted* the value being reacted to. Plausible reason for the mismatch: confidence appears
+  calibrated for code review, while a claim about runtime behaviour in prose needs the KDoc and the
+  implementation cross-referenced before it can be judged.
 
 ## Releasing (maintainers)
 
