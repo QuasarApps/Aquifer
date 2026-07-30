@@ -39,14 +39,17 @@ all landed. What remains is owner action — the four signing secrets and the ve
 - [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
   published coordinates from a clean project, and confirm the snippet still lists all seven
   published modules. *(S)*
-- [ ] **"Coming from Store5" migration guide** — pulled forward from 1.0, and the highest-leverage
-  adoption asset on this file: the README now names Store5 and states the trade honestly, but
-  offers no *mapping*, so the most likely switcher still has nothing to migrate against. The
-  mapping is already understood (`Fetcher`→`fetcher`,
-  `SourceOfTruth`→`SourceOfTruth`, `StoreRequest`→`Freshness`, `Store.stream`→`stream`,
-  `StoreReadResponse`→`DataState`), and the honest differences are short: no
-  `MutableStore`/`Updater` yet, JVM/Android only, epoch fencing instead of bookkeeping. An
-  afternoon of writing, not the M-sized guide set it was filed as. *(S)*
+- [x] **"Coming from Store5" migration guide** (shipped) — `docs/coming-from-store5.md`, linked from
+  the README's comparison section. Written against Store5's current documentation rather than from
+  memory, which turned up two things the planned mapping had wrong. First, this file's own shorthand
+  "epoch fencing instead of bookkeeping" conflated unrelated mechanisms: `Bookkeeper` tracks failed
+  local mutations for the write path, epoch fencing stops an in-flight fetch resurrecting deleted
+  data — the guide says so instead of repeating the equivalence. Second, and the reason the guide
+  leads with deal-breakers rather than a mapping table: Store5's `SourceOfTruth.reader` returns a
+  `Flow`, so storage *is* the reactive source and external writes propagate, whereas Aquifer's `read`
+  is a plain suspend function and the store **never observes a write it did not make**. A Store5 user
+  relying on that gets silence, not an error. Also covers the `Converter` triple-type surface having
+  no counterpart, and the infinite-TTL default versus Store5's `Validator`. *(S)*
 - [x] **SECURITY.md + issue/PR templates** (shipped) — the *first* release ships an
   encryption-at-rest hook with no private disclosure path, so a report on it would have arrived as a
   public issue. `SECURITY.md` routes reports to GitHub private vulnerability reporting (no invented

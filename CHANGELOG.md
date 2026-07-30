@@ -9,6 +9,10 @@ versions may contain breaking changes.
 
 ### Added
 
+- A [Coming from Store5](docs/coming-from-store5.md) migration guide: concept mapping, side-by-side
+  snippets, and the differences that have no counterpart — no `MutableStore` write path, JVM/Android
+  only, one value type instead of `Converter`'s three, and a `SourceOfTruth` that is read on demand
+  rather than a `Flow`, so Aquifer never observes a write it did not make.
 - A `v*` tag now *stages* the Maven Central deployment rather than publishing it outright, leaving
   the Central Portal's Publish button as the last reversible checkpoint before coordinates become
   permanent. A separate, manually dispatched **Cut a GitHub Release** workflow then announces the

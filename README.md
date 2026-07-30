@@ -103,6 +103,11 @@ reason to choose Store5 today; it has **no mutation queue** (Store5's
 counterpart here yet); and it is **unreleased** — the API is locked by binary-compatibility
 validation, but nothing has been published, so none of it has been proven against a real dependent.
 
+Migrating from Store5? [**Coming from Store5**](docs/coming-from-store5.md) maps the concepts
+side by side, leads with what has no counterpart, and covers the one difference that fails
+silently: Store5's `SourceOfTruth` is a `Flow`, so external writes propagate — Aquifer's is a
+plain read, and it never observes a write it did not make.
+
 ## What Aquifer is not
 
 **Read-side only.** `put` is a *local write*, not a pending mutation: there is no rollback, no
