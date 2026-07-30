@@ -67,20 +67,34 @@ per-call `maxAge`, no server-declared `freshFor` and no store `timeToLive` **nev
 
 ## Reading
 
-Store5 composes request flags; Aquifer names the five combinations that matter.
+Store5 composes request flags; Aquifer names the combinations. The correspondence is close but not
+exact, and two entries have no counterpart at all — so don't map call sites mechanically.
 
-```kotlin
-// Store5                                          // Aquifer
-StoreReadRequest.cached(key, refresh = false)   ->  Freshness.CacheOnly
-StoreReadRequest.cached(key, refresh = true)    ->  Freshness.StaleWhileRevalidate
-                                                    // or CacheFirst — see below
-StoreReadRequest.fresh(key)                     ->  Freshness.NetworkOnly, or fresh(key)
-```
+| Store5 request | Fetches when | Aquifer |
+|---|---|---|
+| `localOnly(key)` | never | `Freshness.CacheOnly` |
+| `cached(key, refresh = false)` | on a cache miss | `Freshness.CacheFirst` |
+| `cached(key, refresh = true)` | **always**, hit or miss | *no exact match — see below* |
+| `fresh(key)` | always, skipping caches | `Freshness.NetworkOnly`, or `fresh(key)` |
+| `freshWithFallBackToSourceOfTruth(key)` | always; local value on failure | `Freshness.NetworkFirst` |
+| `skipMemory(key, …)` | reads disk, bypassing memory | *no counterpart* |
+
+Note `cached(refresh = false)` maps to **`CacheFirst`, not `CacheOnly`** — it still fetches on a
+miss. `CacheOnly` is `localOnly`.
+
+The two gaps:
+
+- **`cached(refresh = true)` fetches even when the cached value is fresh.** `StaleWhileRevalidate`
+  is the nearest neighbour and emits the same way — cached value first, refresh behind it — but it
+  fetches only when the entry is *stale*. Under a long `timeToLive` it will therefore make far fewer
+  requests than the Store5 call it replaced. If you want the refresh unconditionally, that is
+  `NetworkFirst`.
+- **`skipMemory` has no equivalent.** Aquifer has no read that bypasses memory but still consults
+  disk.
 
 `CacheFirst` and `StaleWhileRevalidate` differ in whether a *stale* hit blocks: `CacheFirst` awaits
 the refresh, `StaleWhileRevalidate` serves the stale value immediately and refreshes behind it. Both
-serve a *fresh* hit without fetching. Store5's `refresh = true` is closest to
-`StaleWhileRevalidate`.
+serve a *fresh* hit without fetching.
 
 ```kotlin
 users.stream(id).collect { state ->
@@ -96,8 +110,10 @@ users.stream(id).collect { state ->
 Two differences worth knowing:
 
 - **Every state carries the last known value.** `Loading` and `Failure` both expose `value`, so a
-  refresh or a failure never blanks the screen. Store5's `NoNewData` has no Aquifer equivalent —
-  a 304 is simply not an emission.
+  refresh or a failure never blanks the screen.
+- **`NoNewData` has no equivalent, but that is not silence.** A `FetchResult.NotModified` re-ages the
+  cached entry and commits it, so collectors do see a `Content` — same value, but `Origin.FETCHER`
+  and `isStale = false`. If you branched on `NoNewData` to skip work, branch on the value instead.
 - **`DataState.Empty` is new.** It means "affirmatively nothing, and nothing will fetch it", emitted
   to `CacheOnly` streams on a missing key and when a key is invalidated while the stream is live. An
   exhaustive `when` needs the branch.
@@ -124,20 +140,32 @@ Store5's `MutableStore` write path, and the difference is not cosmetic — read 
 
 The subtlest migration hazard, because nothing fails loudly.
 
-Store5's `SourceOfTruth.reader` returns a `Flow`, so storage *is* the reactive source: anything that
-writes to that database — another feature, a background sync, a different process — causes the reader
-to emit and the store to propagate.
+Store5's `SourceOfTruth.reader` returns a `Flow`, so storage can *be* the reactive source: a write
+the backing Flow observes makes the reader emit and the store propagate. How far that reaches is a
+property of your database rather than of Store5 — Room and SQLDelight notify on writes made through
+the same instance, while a write from another process to the same file generally triggers nothing
+unless you wired it up yourself.
 
-Aquifer's `SourceOfTruth.read` is a suspend function returning one value. Streams are fed by
-Aquifer's own in-process update bus, so **Aquifer never observes a write it did not make.** An active
-stream will not see an external write to the underlying store, and whether a fresh read sees one
-depends on whether the key is still resident in memory — so don't rely on either outcome.
+Aquifer's `SourceOfTruth.read` is a plain suspend function, and streams are fed by Aquifer's own
+in-process update bus. The difference is about **notification, not visibility**:
 
-If your Store5 setup depends on external writes propagating, you need to tell Aquifer explicitly:
+- **An active stream is never notified of a write Aquifer did not make.** It holds its current value
+  and emits nothing, however the persisted bytes changed underneath it.
+- **A read that misses memory does pick the new value up**, since it falls through to
+  `SourceOfTruth.read`. So an external write becomes visible on the next cold read of that key —
+  which makes it depend on cache residency, and therefore not something to rely on either way.
+
+If your Store5 setup leaned on storage-level propagation, bridge it explicitly — and bridge it with
+the **value**:
 
 ```kotlin
-externalChanges.collect { key -> users.invalidate(key) }   // or put(key, value) if you have it
+externalChanges.collect { (key, value) -> users.put(key, value) }
 ```
+
+⚠️ Do **not** reach for `invalidate(key)` here. It deletes the persisted entry as well as the memory
+one, so pointing it at a key something else just wrote **destroys that write** and sends active
+streams to the network for a value you already had. If your change feed carries only keys, read the
+value yourself and `put` it.
 
 ## What you gain
 

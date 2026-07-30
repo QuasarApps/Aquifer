@@ -46,9 +46,9 @@ all landed. What remains is owner action — the four signing secrets and the ve
   local mutations for the write path, epoch fencing stops an in-flight fetch resurrecting deleted
   data — the guide says so instead of repeating the equivalence. Second, and the reason the guide
   leads with deal-breakers rather than a mapping table: Store5's `SourceOfTruth.reader` returns a
-  `Flow`, so storage *is* the reactive source and external writes propagate, whereas Aquifer's `read`
-  is a plain suspend function and the store **never observes a write it did not make**. A Store5 user
-  relying on that gets silence, not an error. Also covers the `Converter` triple-type surface having
+  `Flow`, so a write its backing database observes propagates, whereas Aquifer's `read` is a plain
+  suspend function — an active stream is **never notified** of a write Aquifer did not make, though a
+  later cold read still picks it up. A Store5 user relying on that gets silence, not an error. Also covers the `Converter` triple-type surface having
   no counterpart, and the infinite-TTL default versus Store5's `Validator`. *(S)*
 - [x] **SECURITY.md + issue/PR templates** (shipped) — the *first* release ships an
   encryption-at-rest hook with no private disclosure path, so a report on it would have arrived as a
