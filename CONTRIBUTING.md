@@ -58,28 +58,51 @@ handles everything else.
 
 ## Releasing (maintainers)
 
-Releases are cut by tagging: pushing a `v*` tag runs the `release` workflow, which publishes
-to Maven Central via the Central Portal. It requires these repository secrets:
-`MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY` (ASCII-armored PGP),
-and `SIGNING_KEY_PASSWORD`. Bump `version` in `gradle.properties` and add a dated
-`## [x.y.z]` section to `CHANGELOG.md` before tagging — the workflow refuses to publish when the
-tag doesn't match the module versions, when the version is a `-SNAPSHOT`, or when the CHANGELOG
-has no section for it.
+**A published Maven Central version can never be deleted, overwritten or amended.** Every choice
+below follows from that: publishing is irreversible, everything around it is retryable.
 
-After publishing, a second job cuts a GitHub Release from that CHANGELOG section, marking a
-version with a pre-release suffix (`1.0.0-rc1`) as a pre-release. Three structural choices there
-are deliberate, and all follow from one asymmetry — **publishing is irreversible, everything
-around it is retryable**:
+Releasing takes four steps, two of them deliberately manual.
 
-- The CHANGELOG section is verified **before the build**, by `.github/scripts/changelog-section.sh`,
-  so a missing or misnamed section fails while failing is still free.
-- Cutting the release is a **separate `needs: publish` job**, not a final step of the publish job.
-  A transient GitHub API failure would otherwise make "re-run failed jobs" repeat the publication,
-  which immutable coordinates reject — leaving the release impossible to create by re-run. Split,
-  only the release job re-runs.
-- That release job holds the workflow's only `contents: write`; the default stays `contents: read`,
-  and both jobs check out with `persist-credentials: false` so no token lingers in `.git/config`
-  for later build or publish commands to inherit.
+1. **Prepare, on `develop`.** Bump `version` in `gradle.properties` and add a dated
+   `## [x.y.z]` section to `CHANGELOG.md`, in the same PR.
+2. **Promote to `main`.** `main` is release-only and should be a fast-forward of `develop`, so the
+   tagged commit is one CI has already validated:
+   ```bash
+   git checkout main && git merge --ff-only develop && git push origin main
+   ```
+   Nothing enforces this — the release workflow triggers on any `v*` tag on any commit — so tagging
+   `develop` directly would publish perfectly well and leave `main` permanently behind. Promote
+   first.
+3. **Tag.** `git tag v0.1.0 && git push origin v0.1.0` runs the `release` workflow, which verifies
+   the tag against every publishing module, verifies the CHANGELOG has a matching section, builds,
+   and **stages** the deployment on the Central Portal. It requires these repository secrets:
+   `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY` (ASCII-armored PGP), and
+   `SIGNING_KEY_PASSWORD` — the first two being a Central Portal *user token*, not login
+   credentials. The workflow refuses to publish when the tag doesn't match the module versions, when
+   the version is a `-SNAPSHOT`, or when the CHANGELOG has no section for it.
+4. **Publish, then announce.** Review the staged deployment at
+   [central.sonatype.com](https://central.sonatype.com/publishing/deployments) and click **Publish**
+   — or **Drop** it, at no cost, if something is wrong. Once it reads `PUBLISHED`, run the
+   **Cut a GitHub Release** workflow with the tag to announce it.
+
+### Why steps 3 and 4 are split
+
+- **The portal click is the last reversible moment.** `publishToMavenCentral` stages without
+  publishing, so a bad build can still be dropped for free. Automating it away
+  (`publishAndReleaseToMavenCentral`) removes the only checkpoint that exists — reasonable once the
+  pipeline has proven itself, but it is a one-word change that should be made knowingly.
+- **The GitHub Release is a separate, manually dispatched workflow** rather than a
+  `needs: publish` job. Chained to the staged upload it would announce a version nobody can resolve
+  and that might still be dropped; keeping it manual is what makes the announcement mean "this is
+  downloadable". It is also why a transient GitHub API failure can never force a re-publish: the two
+  never share a run.
+- **The CHANGELOG section is verified before the build**, by
+  `.github/scripts/changelog-section.sh`, so a missing or misnamed section fails while failing is
+  still free. The release workflow reads it to validate; the announce workflow reads it *at the
+  tagged commit* to produce the notes, so they are the notes that shipped.
+- **`contents: write` is held only by the announce workflow**, and every checkout uses
+  `persist-credentials: false` so no token lingers in `.git/config` for later build or publish
+  commands to inherit.
 
 The extraction script matches the heading as a literal prefix rather than a regex — a version is
 not regex-safe (`.` matches any character, and SemVer build metadata may contain `+`) — and stops
@@ -92,7 +115,7 @@ than ship silently.
 
 That gate takes the modules it checks from the root `publishingModules` task, which lists every
 subproject applying the `com.vanniktech.maven.publish` plugin — the same condition that decides
-what `publishAndReleaseToMavenCentral` publishes. A new publishing module therefore joins the
+what `publishToMavenCentral` uploads. A new publishing module therefore joins the
 gate the moment it applies the plugin, with nothing to keep in sync by hand, and the workflow
 refuses to release if that list ever comes back empty rather than passing without checking
 anything.

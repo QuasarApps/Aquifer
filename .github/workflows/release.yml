@@ -62,49 +62,33 @@ jobs:
       - name: Build
         run: ./gradlew build --stacktrace
 
-      - name: Publish
-        run: ./gradlew publishAndReleaseToMavenCentral --no-configuration-cache --stacktrace
+      # `publishToMavenCentral` uploads and *stages* the deployment; it does not make it public.
+      # The Central Portal's Publish button is the last human checkpoint before something that can
+      # never be deleted or overwritten, so it is deliberately not automated. To release without
+      # that checkpoint once the pipeline is trusted, change this task to
+      # `publishAndReleaseToMavenCentral` — and re-read the note on the github-release workflow,
+      # which assumes publication is manual.
+      - name: Publish to the Central Portal (staged, not yet public)
+        run: ./gradlew publishToMavenCentral --no-configuration-cache --stacktrace
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
 
-  # A separate job, not a final step of `publish`, because the two have opposite failure
-  # economics: publishing is irreversible, creating a release is a fallible API call. Sharing a job
-  # would mean a transient GitHub outage forces "re-run failed jobs" to repeat the publish, which
-  # immutable coordinates then reject — leaving the release uncreatable by re-run. Split, only this
-  # job re-runs.
-  release:
-    name: Cut a GitHub Release
-    needs: publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # The only write access in the workflow, held by the only job that needs it.
-    permissions:
-      contents: write
-    steps:
-      - name: Check out
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # `gh` ships on the runner, so the release path takes on no third-party action.
-      - name: Cut a GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+      - name: What happens next
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          .github/scripts/changelog-section.sh "$TAG_VERSION" > "$RUNNER_TEMP/release-notes.md"
-          # SemVer pre-release is the '-' component; build metadata after '+' may also contain a
-          # hyphen (1.0.0+build-1), so strip that first. -SNAPSHOT is refused by the version gate.
-          case "${TAG_VERSION%%+*}" in
-            *-*) PRERELEASE=--prerelease ;;
-            *)   PRERELEASE= ;;
-          esac
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file "$RUNNER_TEMP/release-notes.md" \
-            --verify-tag \
-            $PRERELEASE
+          cat >> "$GITHUB_STEP_SUMMARY" <<SUMMARY
+          ### $GITHUB_REF_NAME is staged, not published
+
+          Nothing is public yet and nothing is permanent yet. To finish the release:
+
+          1. Open <https://central.sonatype.com/publishing/deployments> and review the deployment.
+          2. **Publish** it (or **Drop** it, at no cost, if something is wrong).
+          3. Once it shows \`PUBLISHED\`, run the **Cut a GitHub Release** workflow with
+             tag \`$GITHUB_REF_NAME\` to announce it.
+
+          Step 3 is separate because a GitHub Release for a deployment you might still drop would
+          announce a version nobody can resolve.
+          SUMMARY

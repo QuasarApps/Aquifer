@@ -1,0 +1,55 @@
+name: Cut a GitHub Release
+
+# Run this by hand *after* the staged deployment shows PUBLISHED in the Central Portal.
+#
+# It is not chained to the release workflow on purpose. That workflow only *stages* the upload —
+# publication is a manual click, because Maven Central cannot be un-published. A GitHub Release
+# created before that click would announce a version that nobody can resolve, and that might still
+# be dropped. Keeping this manual is what makes the announcement mean "this is downloadable".
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to announce (e.g. v0.1.0). Must already exist.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Cut a GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only write access here, on the only job that needs it.
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      # `gh` ships on the runner, so the release path takes on no third-party action.
+      - name: Cut a GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          TAG_VERSION="${TAG#v}"
+          # Reads the CHANGELOG at the tagged commit, so the notes are the ones that shipped.
+          .github/scripts/changelog-section.sh "$TAG_VERSION" > "$RUNNER_TEMP/release-notes.md"
+          # SemVer pre-release is the '-' component; build metadata after '+' may also contain a
+          # hyphen (1.0.0+build-1), so strip that first. -SNAPSHOT is refused by the version gate.
+          case "${TAG_VERSION%%+*}" in
+            *-*) PRERELEASE=--prerelease ;;
+            *)   PRERELEASE= ;;
+          esac
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --verify-tag \
+            $PRERELEASE

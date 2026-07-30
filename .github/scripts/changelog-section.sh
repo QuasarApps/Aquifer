@@ -2,13 +2,22 @@
 #
 # Prints the CHANGELOG section for a release version to stdout, or fails if there isn't one.
 #
-# The release workflow runs this twice, in two different jobs and for two different reasons:
+# Two workflows call this, for two different reasons:
 #
-#   * the publish job runs it *before* the build, so a missing or misnamed section fails while
-#     failing is still free — a Maven Central publication cannot be undone;
-#   * the release job runs it to produce the notes it hands to `gh release create`. That job is
-#     separate precisely so a transient GitHub API failure can be re-run without repeating the
-#     publish, which immutable coordinates would reject.
+#   * `release.yml` runs it *before* the build, purely as a gate — a missing or misnamed section
+#     fails the release while failing is still free, since a Maven Central publication cannot be
+#     undone. Its output is discarded.
+#   * `github-release.yml` runs it against the *tagged* checkout to produce the notes it hands to
+#     `gh release create`, so the announcement carries the CHANGELOG as it shipped rather than as
+#     `develop` looks later.
+#
+# They are separate workflows, not two jobs, because publication is staged and released by hand:
+# chaining the announcement to the publish run would announce a deployment that is not yet public
+# and could still be dropped. A consequence worth keeping: no GitHub API failure can ever force a
+# re-publish, because the two never share a run.
+#
+# Keeping one implementation for both means the gate and the notes cannot disagree about what a
+# section is.
 #
 # Usage: changelog-section.sh <version> [changelog-path]
 set -euo pipefail
