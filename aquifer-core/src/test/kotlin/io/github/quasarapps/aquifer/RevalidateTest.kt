@@ -456,7 +456,7 @@ class RevalidateTest {
     @Test
     fun `the sweep resolves every active key in one batched read`() = runTest {
         var reads = 0
-        var batchedReads = 0
+        val batches = mutableListOf<Set<String>>()
         val persisted = mutableMapOf<String, PersistedEntry<Int>>()
         val disk = object : SourceOfTruth<String, Int> {
             override suspend fun read(key: String): PersistedEntry<Int>? {
@@ -465,9 +465,10 @@ class RevalidateTest {
             }
 
             // A real batched store (SQLDelight's `IN`-clause adapter) overrides this; the default
-            // would loop over read() and hide the very thing being asserted.
+            // would loop over read() and hide the very thing being asserted. Recording the keys of
+            // each call, not just a count, is what stops a partial batch from passing.
             override suspend fun readAll(keys: Collection<String>): Map<String, PersistedEntry<Int>> {
-                batchedReads++
+                batches += keys.toSet()
                 return keys.mapNotNull { key -> persisted[key]?.let { key to it } }.toMap()
             }
 
@@ -487,7 +488,6 @@ class RevalidateTest {
             clock(clock)
             fetcher { key -> key.last().digitToInt() }
             freshness { timeToLive = 1.minutes }
-            memoryCache { maxEntries = 1 } // force every active key to be a memory miss
             persistence(disk)
         }
         val keys = listOf("k1", "k2", "k3", "k4")
@@ -499,14 +499,17 @@ class RevalidateTest {
             val streams = keys.map { store.stream(it).testIn(backgroundScope) }
             streams.forEach { it.awaitItem() }
 
+            // Shed memory so *every* active key is a miss — the cold reconnect this batching is
+            // for. Leaving one key resident would let a sweep that batched only a subset pass.
+            store.evictMemory()
             reads = 0
-            batchedReads = 0
+            batches.clear()
+
             store.revalidateActive()
             settle()
 
-            // maxEntries = 1 leaves at most one key resident, so the rest are memory misses that
-            // the sweep has to resolve from storage — in exactly one call, not one per key.
-            assertEquals(1, batchedReads)
+            // One batched call, and it carried the whole cold set — not just some of it.
+            assertEquals(listOf(keys.toSet()), batches)
             assertEquals(0, reads)
 
             streams.forEach { it.cancelAndIgnoreRemainingEvents() }

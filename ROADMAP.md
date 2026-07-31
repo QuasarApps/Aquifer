@@ -201,9 +201,12 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   *non-resident* active key rather than per key — but on the cold reconnect that matters (process
   resumed, memory shed) that is precisely when every key is a miss, so it was N sequential reads on
   the path most likely to be cold. The sweep now snapshots the active set and resolves it through
-  the existing `loadAll`, which is one `SourceOfTruth.readAll` with the same epoch fencing and
-  residual-hydration guard `load` applies — so a store overriding `readAll` serves the whole sweep
-  in one query, and one leaving it at the per-key default is no worse off than before.
+  the existing `loadAll`, which issues a batched `SourceOfTruth.readAll` with the same epoch fencing
+  and residual-hydration guard `load` applies — so a store overriding `readAll` serves the whole
+  sweep as one bulk lookup, and one leaving it at the per-key default is no worse off than before.
+  "Bulk", not "a single query": `loadAll` re-reads under the commit lock when a write races the
+  first read, and the SQLDelight adapter chunks at SQLite's host-parameter cap, so a wide active set
+  is still several statements.
 
   **The fetch side is still open.** The sweep's per-key `refresh()` calls are merged only by the
   single accumulator, which exists solely when a plain `batchFetcher` is paired with a positive
