@@ -144,13 +144,18 @@ all landed. What remains is owner action — the four signing secrets and the ve
 
 What every consuming app touches daily; highest user-facing leverage.
 
-- [ ] **Widen the CLI sample past its first five scenarios** — `sample/…/Main.kt` covers cold
-  start, SWR, `put`, "process death" and reconnect-with-retry. It uses no
-  batching, no `getAll`/`streamMany`, no `prefetch`, no conditional fetching, no negative caching,
-  no `stats`/`snapshot`, no encryption or migration — and nothing that demonstrates single-flight
-  dedup. CI runs `:sample:run` once per workflow
-  (gated on the JDK-21 matrix leg), so each scenario added is also a free end-to-end smoke test of
-  a headline path. *(S)*
+- [x] **Widen the CLI sample past its first five scenarios** — the original five (cold start, SWR,
+  `put`, "process death", reconnect-with-retry) are now scenarios 1-5 of a `coreLoopTour`, followed
+  by a `featureTour` covering single-flight dedup, `prefetch`, batched `getAll`, conditional (304)
+  fetching, negative caching, and the `stats`/`snapshot` counters — each with its own store and
+  purpose-built fake backend, so a scenario's assertions (`1 API call for 5 concurrent reads`,
+  `1 call for 3 reads of a dead endpoint`) come from real counters rather than narration. Since CI
+  runs `:sample:run` once per workflow (gated on the JDK-21 matrix leg), each is also a free
+  end-to-end smoke test of a headline path. Batching surfaces one wrinkle worth the log line it
+  got: events stay per-key, so five `fetch started`s precede the single batch call.
+  `streamMany`/`prefetchAll` are left out as reactive/warm-up variants of paths already shown, and
+  encryption and migration stay out because both are `SourceOfTruth` configuration rather than a
+  scenario. *(S)*
 - [x] **`aquifer-compose` module** — `Aquifer.collectAsState(key)` built on
   `collectAsStateWithLifecycle`, a `rememberStream` helper, and a `previewAquifer` fake for
   `@Preview`s; behavior-tested with molecule (no UI-test infrastructure). *(M)*

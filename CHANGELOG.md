@@ -24,6 +24,11 @@ versions may contain breaking changes.
 
 ### Added
 
+- The runnable CLI sample (`./gradlew :sample:run`) now covers eleven scenarios instead of five.
+  Past the core loop it demonstrates single-flight de-duplication, `prefetch`, batched `getAll`,
+  conditional (304) fetching, negative caching, and the `stats`/`snapshot` counters — each against
+  its own fake backend that reports the calls it actually received, so the claims are counters. CI
+  already runs the sample once per workflow, making each scenario an end-to-end smoke test.
 - A [Coming from Store5](docs/coming-from-store5.md) migration guide: concept mapping, side-by-side
   snippets, and the differences that have no counterpart — no `MutableStore` write path, JVM/Android
   only, one value type instead of `Converter`'s three, and a `SourceOfTruth` that is read on demand

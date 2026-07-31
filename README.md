@@ -682,10 +682,16 @@ callable from any thread including the main one.
 ## Try it
 
 ```bash
-./gradlew :sample:run    # five scenarios: cold start, SWR, local write, process death, reconnect
+./gradlew :sample:run    # eleven annotated scenarios, from cold start to the cache counters
 ./gradlew dokkaGenerate  # aggregated API docs in build/dokka/
 ./gradlew build          # tests + binary-compatibility check (api/*.api dumps)
 ```
+
+The tour runs the core loop first — cold start, stale-while-revalidate, a confirmed change via
+`put`, "process death" served from disk, reconnect-with-retry — then the features an app reaches
+for: single-flight de-duplication, `prefetch`, batched `getAll`, conditional (304) fetching,
+negative caching, and the `stats`/`snapshot` counters. Each prints what the fake backend actually
+saw, so "five concurrent reads, one API call" is a counter rather than a claim.
 
 ## Roadmap
 
@@ -707,7 +713,7 @@ their order — this section deliberately does not restate it.
 | `aquifer-persistence-sqldelight` | SQLDelight `SourceOfTruth`: queryable, batched (`IN`-clause + transactions), and enumerable (disk-wide `invalidateWhere`). |
 | `aquifer-okhttp` | OkHttp conditional fetching: automatic `ETag`/`Last-Modified` revalidation, 304 → `NotModified`. |
 | `aquifer-test` | Test doubles for consumers (`testImplementation`): `fakeAquifer` with assertable fetch counts, `FakeClock`, `settle()`. |
-| `sample` | Runnable CLI tour of five scenarios — cold start, stale-while-revalidate, local `put`, process death, reconnect (`./gradlew :sample:run`). |
+| `sample` | Runnable CLI tour: the core loop (cold start, stale-while-revalidate, `put`, process death, reconnect) then single-flight dedup, `prefetch`, batching, 304s, negative caching, and the counters (`./gradlew :sample:run`). |
 
 ## License
 
