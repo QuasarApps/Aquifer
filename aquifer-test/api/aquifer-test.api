@@ -19,7 +19,7 @@ public final class io/github/quasarapps/aquifer/test/FakeAquifer : io/github/qua
 	public fun putAll (Ljava/util/Map;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun resetFetchCounts ()V
 	public final fun returns (Ljava/lang/Object;Ljava/lang/Object;)V
-	public fun revalidateActive (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun revalidateActive (ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun revalidateOn (Lkotlinx/coroutines/flow/Flow;)V
 	public fun snapshot ()Ljava/util/Set;
 	public fun stats ()Lio/github/quasarapps/aquifer/CacheStats;

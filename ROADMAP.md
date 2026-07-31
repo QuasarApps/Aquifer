@@ -194,9 +194,9 @@ What every consuming app touches daily; highest user-facing leverage.
 
 Make the fetch path cheap and stampede-proof under real-world conditions.
 
-- [ ] **Fix `revalidateActive()` — batch its *fetches*, add a force knob** — the reconnect path
-  walked `activeKeys` doing a per-key `load()` then `refresh()`. The read half and the per-stream
-  `maxAge` half have since shipped; what the title names is what is left.
+- [ ] **Fix `revalidateActive()` — batch its *fetches*** — the reconnect path walked `activeKeys`
+  doing a per-key `load()` then `refresh()`. The read half, the per-stream `maxAge` half and the
+  force knob have all since shipped; batching the *fetches* is the one part left.
 
   **The read side is shipped.** `load()` returns from memory first, so the storage hit was per
   *non-resident* active key rather than per key — but on the cold reconnect that matters (process
@@ -229,12 +229,29 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   behaviour intact, which is what `getAll`'s transport already does — the work is routing the sweep
   through it rather than inventing a second path.
 
-  **The force knob is still open**, and is the one piece that is a public API addition rather than
-  a behaviour fix: an explicit "refresh every active key regardless of staleness" escape hatch.
-  Pull-to-refresh has no way to express that today — every route into the sweep judges staleness
-  first, which is exactly what a user yanking the list down is overriding. Together with the fetch
-  batching above, that is the whole of what remains. *(M, read batching and per-stream `maxAge`
-  shipped)*
+  It should also take the sweep's *validator* reads with it. On a conditional store `refreshWith`
+  looks each entry up again for its validator, and the sweep's batched load only warms memory for
+  it — an active set wider than `maxEntries` evicts those entries before the refresh bodies run, so
+  the per-key reads come back. Handing the already-loaded (and already-fenced) snapshots to the
+  refresh path fixes it, and is natural to do at the same time, since batching has to thread per-key
+  state through refresh regardless.
+
+  **The force knob is shipped**, as `revalidateActive(force = false)` — a defaulted parameter
+  rather than a second method, so the two behaviours stay visibly one operation and Kotlin call
+  sites written `revalidateActive()` recompile untouched. Only those: the interface method's JVM
+  descriptor gains the boolean, so pre-compiled code fails to link, Java call sites must pass the
+  argument, and direct `Aquifer` implementors must update their override — breaking rather than
+  additive, as the changelog entry spells out. Pull-to-refresh had no way to express itself before: every route
+  into the sweep judged staleness first, which is exactly what a user yanking the list down is
+  overriding. The deliberate limit is that `force` overrides *staleness only* — a key inside a
+  negative-cache suppression window is still skipped, since that window remembers a failing
+  endpoint rather than a fresh value and a sweep touches every key on screen at once, so bypassing
+  it would turn one gesture into a burst against a backend already known to be down. `fresh(key)`
+  stays the per-key override that ignores the failure memory as well. A forced sweep on a
+  *non-conditional* store also reads no storage, since loading first only ever served the judgement
+  it is skipping — non-conditional meaning neither `conditionalFetcher` nor
+  `conditionalBatchFetcher`, both of which mark the store validator-aware and so still need the
+  entries loaded. *(M, only fetch batching left)*
 - [ ] **Decide what a local `put` does to the validator** — `put`/`putAll` write
   `PersistedEntry(value, now)`, silently dropping the entry's `validator` and
   `serverFreshForMillis`. So a locally written key loses its ETag and its next conditional fetch

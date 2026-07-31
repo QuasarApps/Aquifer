@@ -494,6 +494,18 @@ offline or backgrounded emits on the next recovery, and Wi-Fi↔cellular handove
 The required `ACCESS_NETWORK_STATE` permission is merged in from the library manifest. For anything custom, `revalidateOn(trigger)` accepts
 any `Flow` — a push message, a settings change, a timer.
 
+**Pull-to-refresh** is the case where staleness is beside the point: the user pulling the list down
+is telling you to disregard the freshness bars the app chose for itself. Pass `force`:
+
+```kotlin
+suspend fun onPullToRefresh() = users.revalidateActive(force = true)
+```
+
+That refreshes every active key regardless of age, still sharing one fetch per key. It overrides
+staleness, **not** negative caching — a key inside a suppression window is still skipped, because
+that window remembers a failing endpoint rather than a fresh value, and a sweep touches everything
+on screen at once. `fresh(key)` remains the per-key override that ignores the failure memory too.
+
 ### Observability
 
 ```kotlin

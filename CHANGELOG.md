@@ -7,6 +7,28 @@ versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- `revalidateActive(force = true)` refreshes **every** active key regardless of staleness — the
+  pull-to-refresh gesture, where the user is overriding the freshness bars the app chose for itself.
+  Fetches are still shared per key and epoch-fenced, and `CacheOnly`-only keys are still not active.
+  `force` overrides staleness but **not** negative caching: a key inside a suppression window is
+  still skipped, because that window remembers a failing endpoint rather than a fresh value and a
+  sweep touches every key on screen at once; `fresh(key)` remains the per-key override that ignores
+  the failure memory. A forced sweep on a *non-conditional* store also reads no storage at all,
+  since loading an entry first only ever served the staleness judgement — non-conditional meaning
+  neither `conditionalFetcher` nor `conditionalBatchFetcher`, since either marks the store
+  validator-aware and the entries are still needed to replay validators.
+
+  The parameter defaults to `false`, so **behaviour** is unchanged for every existing caller —
+  including `revalidateOn`, `revalidateOnReconnect` and `revalidateOnAppForeground`, which always
+  sweep unforced — and Kotlin call sites written as `revalidateActive()` recompile untouched. It is
+  not, however, a compatible *signature* change: the interface method's JVM descriptor gains the
+  boolean, so code compiled against an earlier build fails to link, Java call sites must pass the
+  argument explicitly (Kotlin default arguments are invisible from Java), and anyone implementing
+  `Aquifer` directly must update their override. Permitted before 1.0, per this file's header, but
+  it is a breaking change rather than a purely additive one.
+
 ### Changed
 
 - `revalidateActive()` now resolves every active key through a batched `SourceOfTruth.readAll`

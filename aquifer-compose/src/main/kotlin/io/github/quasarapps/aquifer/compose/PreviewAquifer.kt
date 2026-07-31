@@ -133,7 +133,7 @@ private class PreviewAquifer<K : Any, V : Any>(seed: Map<K, V>) : Aquifer<K, V> 
         }
     }
 
-    override suspend fun revalidateActive() = Unit
+    override suspend fun revalidateActive(force: Boolean) = Unit
 
     override fun revalidateOn(trigger: Flow<*>) = Unit
 
