@@ -454,6 +454,69 @@ class RevalidateTest {
     }
 
     @Test
+    fun `the sweep resolves every active key in one batched read`() = runTest {
+        var reads = 0
+        val batches = mutableListOf<Set<String>>()
+        val persisted = mutableMapOf<String, PersistedEntry<Int>>()
+        val disk = object : SourceOfTruth<String, Int> {
+            override suspend fun read(key: String): PersistedEntry<Int>? {
+                reads++
+                return persisted[key]
+            }
+
+            // A real batched store (SQLDelight's `IN`-clause adapter) overrides this; the default
+            // would loop over read() and hide the very thing being asserted. Recording the keys of
+            // each call, not just a count, is what stops a partial batch from passing.
+            override suspend fun readAll(keys: Collection<String>): Map<String, PersistedEntry<Int>> {
+                batches += keys.toSet()
+                return keys.mapNotNull { key -> persisted[key]?.let { key to it } }.toMap()
+            }
+
+            override suspend fun write(key: String, entry: PersistedEntry<Int>) {
+                persisted[key] = entry
+            }
+
+            override suspend fun delete(key: String) {
+                persisted -= key
+            }
+
+            override suspend fun deleteAll() = persisted.clear()
+        }
+        val clock = FakeClock()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { key -> key.last().digitToInt() }
+            freshness { timeToLive = 1.minutes }
+            persistence(disk)
+        }
+        val keys = listOf("k1", "k2", "k3", "k4")
+        keys.forEach { store.put(it, 0) }
+
+        turbineScope {
+            // Fetch-capable streams, so all four keys are active. The entries are still fresh
+            // against the 1-minute TTL, so nothing refetches and the only reads are the sweep's.
+            val streams = keys.map { store.stream(it).testIn(backgroundScope) }
+            streams.forEach { it.awaitItem() }
+
+            // Shed memory so *every* active key is a miss — the cold reconnect this batching is
+            // for. Leaving one key resident would let a sweep that batched only a subset pass.
+            store.evictMemory()
+            reads = 0
+            batches.clear()
+
+            store.revalidateActive()
+            settle()
+
+            // One batched call, and it carried the whole cold set — not just some of it.
+            assertEquals(listOf(keys.toSet()), batches)
+            assertEquals(0, reads)
+
+            streams.forEach { it.cancelAndIgnoreRemainingEvents() }
+        }
+    }
+
+    @Test
     fun `multiple streams of one key trigger a single shared refresh`() = runTest {
         val clock = FakeClock()
         var calls = 0

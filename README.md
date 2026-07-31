@@ -345,7 +345,8 @@ least-recently-used eviction, and temp files orphaned by a crash are cleaned up 
 use. `aquifer-persistence-sqldelight` adds a queryable, enumerable `SourceOfTruth` on SQLDelight,
 whose `keys()` backs a disk-wide `invalidateWhere`. Or implement `SourceOfTruth` yourself to back
 Aquifer with Room or DataStore — four suspend functions (`read`/`write`/`delete`/`deleteAll`), plus optional
-`readAll`/`writeAll`/`deleteMany` to let `getAll`/`streamMany`/`prefetchAll`/`putAll`/`invalidateWhere` batch
+`readAll`/`writeAll`/`deleteMany` to let
+`getAll`/`streamMany`/`prefetchAll`/`revalidateActive`/`putAll`/`invalidateWhere` batch
 in one query or transaction (they default to the per-key loop, so overriding them is purely an
 optimization). An enumerable backend may also override `keys()` / `keysWhere(...)`, so a disk-wide
 `invalidateWhere` reaches every persisted key — not just those tracked in memory — while the file
