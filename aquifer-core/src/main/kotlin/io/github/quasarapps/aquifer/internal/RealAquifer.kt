@@ -868,7 +868,14 @@ internal class RealAquifer<K : Any, V : Any>(
         if (active.isEmpty()) return
         // A forced sweep judges nothing, so the batched read is only worth making on a
         // conditional store — there refreshWith() looks each entry up again for its validator,
-        // and warming them here keeps that a memory hit instead of N cold per-key reads.
+        // and warming them here usually makes that a memory hit.
+        //
+        // Usually, not always: hydration goes through the bounded memory cache and the refresh
+        // bodies run later on the store's scope, so an active set wider than `maxEntries` can
+        // evict the very entries this warmed and fall back to per-key reads. Correct either way
+        // — load() re-reads and re-fences — but the saving is best-effort. Handing these
+        // snapshots to the refresh path instead of having it re-read is the real fix; it belongs
+        // with the fetch-batching work, which has to thread per-key state through refresh anyway.
         val loaded = if (force && !conditional) emptyMap() else loadAll(active.keys)
         for ((key, bars) in active) {
             val entry = loaded[key]?.entry

@@ -16,10 +16,16 @@ versions may contain breaking changes.
   still skipped, because that window remembers a failing endpoint rather than a fresh value and a
   sweep touches every key on screen at once; `fresh(key)` remains the per-key override that ignores
   the failure memory. A forced sweep on a store with no `conditionalFetcher` also reads no storage
-  at all, since loading an entry first only ever served the staleness judgement. The parameter
-  defaults to `false`, so existing callers — including `revalidateOn`,
-  `revalidateOnReconnect` and `revalidateOnAppForeground`, which always sweep unforced — are
-  unaffected.
+  at all, since loading an entry first only ever served the staleness judgement.
+
+  The parameter defaults to `false`, so **behaviour** is unchanged for every existing caller —
+  including `revalidateOn`, `revalidateOnReconnect` and `revalidateOnAppForeground`, which always
+  sweep unforced — and Kotlin call sites written as `revalidateActive()` recompile untouched. It is
+  not, however, a compatible *signature* change: the interface method's JVM descriptor gains the
+  boolean, so code compiled against an earlier build fails to link, Java call sites must pass the
+  argument explicitly (Kotlin default arguments are invisible from Java), and anyone implementing
+  `Aquifer` directly must update their override. Permitted before 1.0, per this file's header, but
+  it is a breaking change rather than a purely additive one.
 
 ### Changed
 

@@ -229,6 +229,13 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   behaviour intact, which is what `getAll`'s transport already does — the work is routing the sweep
   through it rather than inventing a second path.
 
+  It should also take the sweep's *validator* reads with it. On a conditional store `refreshWith`
+  looks each entry up again for its validator, and the sweep's batched load only warms memory for
+  it — an active set wider than `maxEntries` evicts those entries before the refresh bodies run, so
+  the per-key reads come back. Handing the already-loaded (and already-fenced) snapshots to the
+  refresh path fixes it, and is natural to do at the same time, since batching has to thread per-key
+  state through refresh regardless.
+
   **The force knob is shipped**, as `revalidateActive(force = false)` — a defaulted parameter
   rather than a second method, so the two behaviours stay visibly one operation and every existing
   caller is source-compatible. Pull-to-refresh had no way to express itself before: every route
