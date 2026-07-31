@@ -860,8 +860,15 @@ internal class RealAquifer<K : Any, V : Any>(
 
     override suspend fun revalidateActive() {
         checkOpen()
-        for ((key, bars) in activeKeys) {
-            val entry = load(key)?.entry
+        // Snapshot the active set, then resolve it in one batched read. The reconnect this
+        // exists for is typically cold — process resumed, memory shed — which is exactly when
+        // every key is a memory miss and the per-key path was N sequential storage reads.
+        // Iterating the copy also keeps the keys judged identical to the keys read.
+        val active = LinkedHashMap(activeKeys)
+        if (active.isEmpty()) return
+        val loaded = loadAll(active.keys)
+        for ((key, bars) in active) {
+            val entry = loaded[key]?.entry
             // Refresh if *any* collector on this key considers the entry stale — equivalently,
             // judge against the tightest bar asked for. They all share the one fetch, so
             // satisfying the strictest collector satisfies the rest for free.

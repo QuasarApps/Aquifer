@@ -9,6 +9,15 @@ versions may contain breaking changes.
 
 ### Changed
 
+- `revalidateActive()` now resolves every active key through one `SourceOfTruth.readAll` instead of
+  a `read` per key. The sweep exists for the reconnect that follows a process resume, which is
+  exactly when memory has been shed and every active key is a miss — previously N sequential
+  storage reads on the path most likely to be cold. Stores that leave `readAll` at its default
+  per-key loop see the same number of reads as before; those that override it (the SQLDelight
+  adapter's `IN` clause, or your own) now serve the whole sweep in one query. Staleness judgement,
+  epoch fencing and the residual-hydration guard are unchanged — this reuses the batched loader the
+  multi-key reads already went through.
+
 - `revalidateActive()` — and with it `revalidateOn`, `revalidateOnReconnect` and
   `revalidateOnAppForeground` — now judges each active key against the per-call `maxAge` its stream
   collectors declared, instead of against the store-wide TTL alone. `stream(key, maxAge = 30.seconds)`

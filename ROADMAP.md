@@ -195,13 +195,23 @@ What every consuming app touches daily; highest user-facing leverage.
 Make the fetch path cheap and stampede-proof under real-world conditions.
 
 - [ ] **Fix `revalidateActive()` — batch it, honor per-stream `maxAge`, add a force knob** — the
-  reconnect path walks `activeKeys` and does a per-key `load()` then `refresh()`. `load()` returns
-  from memory first, so the storage hit is per *non-resident* active key rather than per key — but
-  on the cold reconnect that matters (process resumed, memory shed) that is still N sequential
-  reads where one `readAll` would do. On the fetch side the sweep's per-key `refresh()` calls are
-  merged only by the single accumulator, which exists solely when a plain `batchFetcher` is paired
-  with a positive `coalesceWindow`; `fetcher`, `conditionalFetcher`, `conditionalBatchFetcher` and a
-  window-less `batchFetcher` all stay N calls, so the gap is every store without that window.
+  reconnect path walked `activeKeys` doing a per-key `load()` then `refresh()`.
+
+  **The read side is shipped.** `load()` returns from memory first, so the storage hit was per
+  *non-resident* active key rather than per key — but on the cold reconnect that matters (process
+  resumed, memory shed) that is precisely when every key is a miss, so it was N sequential reads on
+  the path most likely to be cold. The sweep now snapshots the active set and resolves it through
+  the existing `loadAll`, which is one `SourceOfTruth.readAll` with the same epoch fencing and
+  residual-hydration guard `load` applies — so a store overriding `readAll` serves the whole sweep
+  in one query, and one leaving it at the per-key default is no worse off than before.
+
+  **The fetch side is still open.** The sweep's per-key `refresh()` calls are merged only by the
+  single accumulator, which exists solely when a plain `batchFetcher` is paired with a positive
+  `coalesceWindow`; `fetcher`, `conditionalFetcher`, `conditionalBatchFetcher` and a window-less
+  `batchFetcher` all stay N calls, so the gap is every store without that window. Harder than the
+  read side: a batched refresh has to keep per-key single-flight, fencing and negative-cache
+  behaviour intact, which is what `getAll`'s transport already does — the work is routing the sweep
+  through it rather than inventing a second path.
 
   **Per-stream freshness is shipped.** `activeKeys` was a bare `ConcurrentHashMap<K, Int>` refcount,
   so a `stream(key, maxAge = 30.seconds)` was revalidated against the store-wide TTL instead of the
