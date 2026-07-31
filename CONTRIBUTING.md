@@ -58,9 +58,9 @@ handles everything else.
 - **Expand the collapsed part of an automated review.** Copilot files some findings as *"comments
   suppressed due to low confidence"*. Those live only inside a `<details>` block in the review body:
   they create **no review thread**, so they cannot be resolved, never appear as outstanding, and
-  leave no trace that they were raised at all. Everything filed as a thread is tracked by GitHub
-  whether or not anyone is diligent; these are tracked only by someone remembering to look. Triage
-  them like any other comment.
+  leave nothing behind but their text inside that one review body. Everything filed as a thread is
+  tracked by GitHub whether or not anyone is diligent; these are tracked only by someone remembering
+  to open the `<details>`. Triage them like any other comment.
 
   The label is not a good guide to whether they matter. On #80 all four suppressed findings were
   correct, and the most consequential comment in that PR was among them — it caught documentation
