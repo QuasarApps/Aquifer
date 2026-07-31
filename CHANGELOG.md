@@ -7,6 +7,20 @@ versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- `revalidateActive(force = true)` refreshes **every** active key regardless of staleness — the
+  pull-to-refresh gesture, where the user is overriding the freshness bars the app chose for itself.
+  Fetches are still shared per key and epoch-fenced, and `CacheOnly`-only keys are still not active.
+  `force` overrides staleness but **not** negative caching: a key inside a suppression window is
+  still skipped, because that window remembers a failing endpoint rather than a fresh value and a
+  sweep touches every key on screen at once; `fresh(key)` remains the per-key override that ignores
+  the failure memory. A forced sweep on a store with no `conditionalFetcher` also reads no storage
+  at all, since loading an entry first only ever served the staleness judgement. The parameter
+  defaults to `false`, so existing callers — including `revalidateOn`,
+  `revalidateOnReconnect` and `revalidateOnAppForeground`, which always sweep unforced — are
+  unaffected.
+
 ### Changed
 
 - `revalidateActive()` now resolves every active key through a batched `SourceOfTruth.readAll`

@@ -350,8 +350,10 @@ public class FakeAquifer<K : Any, V : Any> internal constructor(
         }
     }
 
-    override suspend fun revalidateActive() {
-        checkOpen() // no-op: the fake tracks no active collectors; drive refreshes with fresh()/get
+    override suspend fun revalidateActive(force: Boolean) {
+        // No-op either way: the fake tracks no active collectors, so `force` has nothing to
+        // force. Drive refreshes with fresh()/get.
+        checkOpen()
     }
 
     override fun revalidateOn(trigger: Flow<*>) {

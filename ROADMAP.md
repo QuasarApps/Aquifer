@@ -194,9 +194,9 @@ What every consuming app touches daily; highest user-facing leverage.
 
 Make the fetch path cheap and stampede-proof under real-world conditions.
 
-- [ ] **Fix `revalidateActive()` — batch its *fetches*, add a force knob** — the reconnect path
-  walked `activeKeys` doing a per-key `load()` then `refresh()`. The read half and the per-stream
-  `maxAge` half have since shipped; what the title names is what is left.
+- [ ] **Fix `revalidateActive()` — batch its *fetches*** — the reconnect path walked `activeKeys`
+  doing a per-key `load()` then `refresh()`. The read half, the per-stream `maxAge` half and the
+  force knob have all since shipped; batching the *fetches* is the one part left.
 
   **The read side is shipped.** `load()` returns from memory first, so the storage hit was per
   *non-resident* active key rather than per key — but on the cold reconnect that matters (process
@@ -229,12 +229,17 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   behaviour intact, which is what `getAll`'s transport already does — the work is routing the sweep
   through it rather than inventing a second path.
 
-  **The force knob is still open**, and is the one piece that is a public API addition rather than
-  a behaviour fix: an explicit "refresh every active key regardless of staleness" escape hatch.
-  Pull-to-refresh has no way to express that today — every route into the sweep judges staleness
-  first, which is exactly what a user yanking the list down is overriding. Together with the fetch
-  batching above, that is the whole of what remains. *(M, read batching and per-stream `maxAge`
-  shipped)*
+  **The force knob is shipped**, as `revalidateActive(force = false)` — a defaulted parameter
+  rather than a second method, so the two behaviours stay visibly one operation and every existing
+  caller is source-compatible. Pull-to-refresh had no way to express itself before: every route
+  into the sweep judged staleness first, which is exactly what a user yanking the list down is
+  overriding. The deliberate limit is that `force` overrides *staleness only* — a key inside a
+  negative-cache suppression window is still skipped, since that window remembers a failing
+  endpoint rather than a fresh value and a sweep touches every key on screen at once, so bypassing
+  it would turn one gesture into a burst against a backend already known to be down. `fresh(key)`
+  stays the per-key override that ignores the failure memory as well. A forced sweep on a store
+  with no `conditionalFetcher` also reads no storage, since loading first only ever served the
+  judgement it is skipping. *(M, only fetch batching left)*
 - [ ] **Decide what a local `put` does to the validator** — `put`/`putAll` write
   `PersistedEntry(value, now)`, silently dropping the entry's `validator` and
   `serverFreshForMillis`. So a locally written key loses its ETag and its next conditional fetch

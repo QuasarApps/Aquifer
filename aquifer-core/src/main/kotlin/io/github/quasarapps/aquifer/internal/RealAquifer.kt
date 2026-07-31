@@ -858,7 +858,7 @@ internal class RealAquifer<K : Any, V : Any>(
             Freshness.NetworkFirst, Freshness.NetworkOnly -> false
         }
 
-    override suspend fun revalidateActive() {
+    override suspend fun revalidateActive(force: Boolean) {
         checkOpen()
         // Snapshot the active set, then resolve it in one batched read. The reconnect this
         // exists for is typically cold — process resumed, memory shed — which is exactly when
@@ -866,13 +866,16 @@ internal class RealAquifer<K : Any, V : Any>(
         // Iterating the copy also keeps the keys judged identical to the keys read.
         val active = LinkedHashMap(activeKeys)
         if (active.isEmpty()) return
-        val loaded = loadAll(active.keys)
+        // A forced sweep judges nothing, so the batched read is only worth making on a
+        // conditional store — there refreshWith() looks each entry up again for its validator,
+        // and warming them here keeps that a memory hit instead of N cold per-key reads.
+        val loaded = if (force && !conditional) emptyMap() else loadAll(active.keys)
         for ((key, bars) in active) {
             val entry = loaded[key]?.entry
             // Refresh if *any* collector on this key considers the entry stale — equivalently,
             // judge against the tightest bar asked for. They all share the one fetch, so
             // satisfying the strictest collector satisfies the rest for free.
-            val stale = entry == null ||
+            val stale = force || entry == null ||
                 bars.bars.any { maxAge ->
                     isExpired(
                         key,
@@ -881,6 +884,8 @@ internal class RealAquifer<K : Any, V : Any>(
                         entryFreshFor = entry.serverFreshForMillis?.milliseconds,
                     )
                 }
+            // Suppression still applies under force: it records a failing endpoint, not a fresh
+            // value, and a sweep touches every key on screen at once. See the KDoc.
             if (stale && suppression(key) == null) refresh(key)
         }
     }

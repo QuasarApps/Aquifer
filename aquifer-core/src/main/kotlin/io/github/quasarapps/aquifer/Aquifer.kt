@@ -364,7 +364,8 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
 
     /**
      * Triggers a refresh for every key that currently has an active [stream] collector and
-     * whose entry is stale or missing. Fresh entries, keys observed only by
+     * whose entry is stale or missing — or, with [force], for every active key regardless.
+     * Fresh entries, keys observed only by
      * [Freshness.CacheOnly] streams, and keys still inside a [NegativeCacheConfig] suppression
      * window are skipped, and concurrent refreshes share fetches as usual. Returns once the
      * refreshes are *triggered*; results arrive through the streams.
@@ -384,10 +385,27 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * refreshed once that bar has elapsed, not merely for having declared one. An unelapsed bar, or
      * `maxAge = Duration.INFINITE` ("serve anything cached"), is skipped like any other fresh entry.
      *
+     * Pass [force] to skip the staleness judgement entirely and refresh **every** active key —
+     * pull-to-refresh, where the user pulling the list down is precisely an instruction to
+     * disregard the freshness bars the app itself chose. Everything else is unchanged: fetches are
+     * still shared per key, still epoch-fenced, and [Freshness.CacheOnly]-only keys are still not
+     * active. A forced sweep on a store with no conditional fetcher also reads no storage at all,
+     * since the only reason to load an entry first was to judge it.
+     *
+     * **[force] overrides staleness, not negative caching.** A key inside a
+     * [NegativeCacheConfig] suppression window is still skipped, because that window records a
+     * *failing endpoint* rather than a fresh value, and a sweep hits every key on screen at once —
+     * the one place where bypassing it would turn one user gesture into a burst against a backend
+     * already known to be down. Suppressed keys are reported through
+     * [AquiferEvents.onFetchSuppressed], and [fresh] remains the per-key override that ignores the
+     * memory outright.
+     *
      * This is the building block for "refresh when the app comes back online / to the
-     * foreground" behaviour — see [revalidateOn].
+     * foreground" behaviour — see [revalidateOn], which always sweeps unforced.
+     *
+     * @param force refresh every active key regardless of staleness; defaults to `false`.
      */
-    public suspend fun revalidateActive()
+    public suspend fun revalidateActive(force: Boolean = false)
 
     /**
      * Calls [revalidateActive] every time [trigger] emits, for the lifetime of this store.

@@ -15,7 +15,8 @@ public abstract interface class io/github/quasarapps/aquifer/Aquifer : java/lang
 	public static synthetic fun prefetchAll$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/util/Set;Lio/github/quasarapps/aquifer/Freshness;ILjava/lang/Object;)V
 	public abstract fun put (Ljava/lang/Object;Ljava/lang/Object;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun putAll (Ljava/util/Map;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun revalidateActive (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun revalidateActive (ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun revalidateActive$default (Lio/github/quasarapps/aquifer/Aquifer;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun revalidateOn (Lkotlinx/coroutines/flow/Flow;)V
 	public abstract fun snapshot ()Ljava/util/Set;
 	public abstract fun stats ()Lio/github/quasarapps/aquifer/CacheStats;
@@ -31,6 +32,7 @@ public final class io/github/quasarapps/aquifer/Aquifer$DefaultImpls {
 	public static synthetic fun getAll$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/util/Set;Lio/github/quasarapps/aquifer/Freshness;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun prefetch$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/lang/Object;Lio/github/quasarapps/aquifer/Freshness;ILjava/lang/Object;)V
 	public static synthetic fun prefetchAll$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/util/Set;Lio/github/quasarapps/aquifer/Freshness;ILjava/lang/Object;)V
+	public static synthetic fun revalidateActive$default (Lio/github/quasarapps/aquifer/Aquifer;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun stream-moChb0s$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/lang/Object;Lio/github/quasarapps/aquifer/Freshness;Lkotlin/time/Duration;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
 	public static synthetic fun streamMany$default (Lio/github/quasarapps/aquifer/Aquifer;Ljava/util/Set;Lio/github/quasarapps/aquifer/Freshness;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
 }
