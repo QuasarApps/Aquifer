@@ -12,11 +12,15 @@ versions may contain breaking changes.
 - `revalidateActive()` — and with it `revalidateOn`, `revalidateOnReconnect` and
   `revalidateOnAppForeground` — now judges each active key against the per-call `maxAge` its stream
   collectors declared, instead of against the store-wide TTL alone. `stream(key, maxAge = 30.seconds)`
-  is therefore swept on the horizon its caller asked for, including under the default
-  `timeToLive = Duration.INFINITE`, where such a key was previously never eligible for reconnect
-  revalidation at all. Where several streams collect one key the tightest bar wins; they share the
-  single resulting fetch as before. No signature changed — a store whose streams pass no `maxAge`
-  behaves exactly as it did.
+  is therefore swept on the horizon its caller asked for once that horizon elapses, including under
+  the default `timeToLive = Duration.INFINITE`. The old sweep did honour an entry's server-declared
+  `freshFor`, so what was previously unreachable there is the narrower case of a *cached* entry
+  carrying no finite `freshFor`: its key was swept only while nothing was cached for it, and never
+  again afterwards. Where several streams collect one key the tightest bar wins; they share the
+  single resulting fetch as before. The precedence cuts both ways: a stream declaring a `maxAge`
+  *looser* than the store TTL — up to `Duration.INFINITE`, "serve anything cached" — now holds the
+  sweep off its key, exactly as that bar already governed the read that declared it. No signature
+  changed, and a store whose streams pass no `maxAge` behaves exactly as it did.
 
 ### Added
 

@@ -206,7 +206,8 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   **default** `timeToLive = Duration.INFINITE`, under which an entry carrying no server-declared
   `freshFor` never expires: such a store used to revalidate *only the active keys with nothing
   cached, plus any whose server horizon had elapsed* while looking like it refreshed everything on
-  screen, and a stream that declares a `maxAge` is now eligible too. A multiset rather than a single
+  screen, and a stream that declares a `maxAge` is now swept on that bar once it elapses. A multiset
+  rather than a single
   tightest bar because unregistration has to drop exactly the bar its own stream added.
 
   **Still open, both independent of that:** batch the staleness check and the refresh through the

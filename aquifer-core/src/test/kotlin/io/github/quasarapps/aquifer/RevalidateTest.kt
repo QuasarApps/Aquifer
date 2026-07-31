@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -281,6 +282,55 @@ class RevalidateTest {
             assertEquals(DataState.Content(1, Origin.FETCHER, isStale = false), awaitItem())
         }
         assertEquals(1, calls)
+    }
+
+    @Test
+    fun `an unelapsed maxAge does not make the sweep refresh the key`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            freshness { timeToLive = 1.minutes }
+        }
+        store.put("k", 100)
+
+        // Declaring a bar is not the same as exceeding it: 30s of a 1-hour bar have passed.
+        store.stream("k", maxAge = 1.hours).test {
+            assertEquals(DataState.Content(100, Origin.MEMORY, isStale = false), awaitItem())
+
+            clock.advanceBy(30.seconds)
+            store.revalidateActive()
+            settle()
+            expectNoEvents()
+        }
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `an infinite maxAge holds the sweep off even past the store TTL`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            freshness { timeToLive = 1.minutes }
+        }
+        store.put("k", 100)
+
+        // "Serve anything cached" is a real answer, and it outranks the store TTL here exactly
+        // as it does on the read that declared it.
+        store.stream("k", maxAge = Duration.INFINITE).test {
+            assertEquals(DataState.Content(100, Origin.MEMORY, isStale = false), awaitItem())
+
+            clock.advanceBy(10.minutes)
+            store.revalidateActive()
+            settle()
+            expectNoEvents()
+        }
+        assertEquals(0, calls)
     }
 
     @Test

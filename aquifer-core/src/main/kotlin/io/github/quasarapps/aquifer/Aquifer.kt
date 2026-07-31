@@ -380,8 +380,9 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * declared it. When several streams collect one key the sweep judges the entry against **each**
      * of their bars and refreshes if any considers it stale — the tightest bar wins, and since they
      * all share the single resulting fetch, satisfying it satisfies the rest. A `maxAge` therefore
-     * makes a key eligible for reconnect revalidation even under the default
-     * [Duration.INFINITE] TTL.
+     * brings a key within the sweep's reach even under the default [Duration.INFINITE] TTL — it is
+     * refreshed once that bar has elapsed, not merely for having declared one. An unelapsed bar, or
+     * `maxAge = Duration.INFINITE` ("serve anything cached"), is skipped like any other fresh entry.
      *
      * This is the building block for "refresh when the app comes back online / to the
      * foreground" behaviour — see [revalidateOn].

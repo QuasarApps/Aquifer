@@ -158,15 +158,16 @@ servable, but due for revalidation:
 > becomes stale, and for those entries every strategy above collapses onto its *fresh entry* column:
 > `CacheFirst` serves the first fetch forever, `StaleWhileRevalidate` never revalidates,
 > `revalidateActive()` (and with it `revalidateOnReconnect`/`revalidateOnAppForeground`) refreshes
-> only the active keys with nothing cached or with a collector holding a per-call `maxAge` — a first
-> fetch that failed while offline retries on the next trigger, unless negative caching is configured
-> and still suppressing that key, in which case the sweep skips it until the window elapses — and
-> `isStale` is permanently `false`. What still
+> only the active keys with nothing cached — a first fetch that failed while offline retries on the
+> next trigger, unless negative caching is configured and still suppressing that key, in which case
+> the sweep skips it until the window elapses — and `isStale` is permanently `false`. What still
 > reaches the network: a cache miss, `NetworkFirst`/`NetworkOnly`, `fresh(key)`, and — under any
 > strategy that fetches at all, so not `CacheOnly` — an entry whose per-call `maxAge` or
-> server-declared `freshFor` has elapsed. A live negative-cache suppression window still holds all
-> of those back except `NetworkOnly`/`fresh(key)`. Give any store whose data can change upstream a
-> `timeToLive`.
+> server-declared `freshFor` has elapsed. That last one is also the way out for the sweep: a stream
+> that declares a `maxAge` has an override, so it is outside "those entries" above, and
+> `revalidateActive()` refreshes its key once that bar elapses. A live negative-cache suppression
+> window still holds all of those back except `NetworkOnly`/`fresh(key)`. Give any store whose data
+> can change upstream a `timeToLive`.
 
 Two multi-key divergences are worth knowing before you reach for them. `getAll` is one-shot and
 awaits every fetch it triggers, so `StaleWhileRevalidate` there behaves like `CacheFirst` — it
