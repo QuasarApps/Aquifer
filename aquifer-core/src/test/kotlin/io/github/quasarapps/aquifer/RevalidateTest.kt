@@ -7,7 +7,10 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 class RevalidateTest {
 
@@ -229,6 +232,225 @@ class RevalidateTest {
             assertEquals(DataState.Content(2, Origin.FETCHER, isStale = false), awaitItem())
         }
         assertEquals(2, fetches)
+    }
+
+    @Test
+    fun `the sweep judges a stream by its own maxAge, not the store TTL`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            freshness { timeToLive = 1.hours }
+        }
+        store.put("k", 100)
+
+        // Still fresh by the store's 1-hour TTL, but well past the 30 seconds this caller asked for.
+        store.stream("k", maxAge = 30.seconds).test {
+            assertEquals(DataState.Content(100, Origin.MEMORY, isStale = false), awaitItem())
+
+            clock.advanceBy(5.minutes)
+            store.revalidateActive()
+
+            assertEquals(DataState.Loading(100), awaitItem())
+            assertEquals(DataState.Content(1, Origin.FETCHER, isStale = false), awaitItem())
+        }
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `a maxAge stream is swept even under the default infinite TTL`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            // No freshness block: timeToLive defaults to INFINITE, so nothing is ever stale
+            // by the store's own reckoning and the sweep used to skip this key forever.
+        }
+        store.put("k", 100)
+
+        store.stream("k", maxAge = 30.seconds).test {
+            assertEquals(DataState.Content(100, Origin.MEMORY, isStale = false), awaitItem())
+
+            clock.advanceBy(5.minutes)
+            store.revalidateActive()
+
+            assertEquals(DataState.Loading(100), awaitItem())
+            assertEquals(DataState.Content(1, Origin.FETCHER, isStale = false), awaitItem())
+        }
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `an unelapsed maxAge does not make the sweep refresh the key`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            freshness { timeToLive = 1.minutes }
+        }
+        store.put("k", 100)
+
+        // Declaring a bar is not the same as exceeding it: 30s of a 1-hour bar have passed.
+        store.stream("k", maxAge = 1.hours).test {
+            assertEquals(DataState.Content(100, Origin.MEMORY, isStale = false), awaitItem())
+
+            clock.advanceBy(30.seconds)
+            store.revalidateActive()
+            settle()
+            expectNoEvents()
+        }
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `an infinite maxAge holds the sweep off even past the store TTL`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            freshness { timeToLive = 1.minutes }
+        }
+        store.put("k", 100)
+
+        // "Serve anything cached" is a real answer, and it outranks the store TTL here exactly
+        // as it does on the read that declared it.
+        store.stream("k", maxAge = Duration.INFINITE).test {
+            assertEquals(DataState.Content(100, Origin.MEMORY, isStale = false), awaitItem())
+
+            clock.advanceBy(10.minutes)
+            store.revalidateActive()
+            settle()
+            expectNoEvents()
+        }
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `a stream without a maxAge is still judged by the store TTL`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            freshness { timeToLive = 1.hours }
+        }
+        store.put("k", 100)
+
+        store.stream("k").test {
+            assertEquals(DataState.Content(100, Origin.MEMORY, isStale = false), awaitItem())
+
+            clock.advanceBy(5.minutes) // past a tight bar, but nobody asked for one
+            store.revalidateActive()
+            settle()
+            expectNoEvents()
+        }
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `the tightest bar among several streams of one key wins`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            freshness { timeToLive = 1.hours }
+        }
+        store.put("k", 100)
+
+        turbineScope {
+            val relaxed = store.stream("k", maxAge = 1.hours).testIn(backgroundScope)
+            val strict = store.stream("k", maxAge = 30.seconds).testIn(backgroundScope)
+            relaxed.awaitItem()
+            strict.awaitItem()
+
+            clock.advanceBy(5.minutes) // fresh for `relaxed`, stale for `strict`
+
+            store.revalidateActive()
+
+            // One shared fetch, delivered to both collectors.
+            assertEquals(DataState.Loading(100), relaxed.awaitItem())
+            assertEquals(DataState.Content(1, Origin.FETCHER, isStale = false), relaxed.awaitItem())
+            assertEquals(DataState.Loading(100), strict.awaitItem())
+            assertEquals(DataState.Content(1, Origin.FETCHER, isStale = false), strict.awaitItem())
+
+            relaxed.cancelAndIgnoreRemainingEvents()
+            strict.cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `a cancelled stream takes only its own bar with it`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            freshness { timeToLive = 1.hours }
+        }
+        store.put("k", 100)
+
+        turbineScope {
+            val relaxed = store.stream("k").testIn(backgroundScope)
+            val strict = store.stream("k", maxAge = 30.seconds).testIn(backgroundScope)
+            relaxed.awaitItem()
+            strict.awaitItem()
+
+            strict.cancelAndIgnoreRemainingEvents()
+            settle() // let the cancellation unwind and drop the 30-second bar
+
+            clock.advanceBy(5.minutes)
+            store.revalidateActive()
+            settle()
+
+            // Only the relaxed collector is left, so the store TTL governs again.
+            relaxed.expectNoEvents()
+            relaxed.cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun `two streams sharing one bar both have to detach before it is dropped`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            fetcher { ++calls }
+            freshness { timeToLive = 1.hours }
+        }
+        store.put("k", 100)
+
+        turbineScope {
+            val first = store.stream("k", maxAge = 30.seconds).testIn(backgroundScope)
+            val second = store.stream("k", maxAge = 30.seconds).testIn(backgroundScope)
+            first.awaitItem()
+            second.awaitItem()
+
+            first.cancelAndIgnoreRemainingEvents()
+            settle() // the bar is held twice; one detaching must not drop it
+
+            clock.advanceBy(5.minutes)
+            store.revalidateActive()
+
+            assertEquals(DataState.Loading(100), second.awaitItem())
+            assertEquals(DataState.Content(1, Origin.FETCHER, isStale = false), second.awaitItem())
+            second.cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(1, calls)
     }
 
     @Test

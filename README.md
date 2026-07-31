@@ -163,9 +163,11 @@ servable, but due for revalidation:
 > the sweep skips it until the window elapses — and `isStale` is permanently `false`. What still
 > reaches the network: a cache miss, `NetworkFirst`/`NetworkOnly`, `fresh(key)`, and — under any
 > strategy that fetches at all, so not `CacheOnly` — an entry whose per-call `maxAge` or
-> server-declared `freshFor` has elapsed. A live negative-cache suppression window still holds all
-> of those back except `NetworkOnly`/`fresh(key)`. Give any store whose data can change upstream a
-> `timeToLive`.
+> server-declared `freshFor` has elapsed. That last one is also the way out for the sweep: a stream
+> that declares a `maxAge` has an override, so it is outside "those entries" above, and
+> `revalidateActive()` refreshes its key once that bar elapses. A live negative-cache suppression
+> window still holds all of those back except `NetworkOnly`/`fresh(key)`. Give any store whose data
+> can change upstream a `timeToLive`.
 
 Two multi-key divergences are worth knowing before you reach for them. `getAll` is one-shot and
 awaits every fetch it triggers, so `StaleWhileRevalidate` there behaves like `CacheFirst` — it
@@ -173,9 +175,11 @@ blocks on the network rather than serving stale; use `streamMany` when you want
 stale-while-revalidate across many keys. And `maxAge` is a `get`/`stream` knob only:
 `getAll`/`streamMany`/`prefetch`/`prefetchAll` take `freshness` alone, judging staleness against
 each entry's server-declared `freshFor` when it has one and the store's TTL otherwise.
-`revalidateActive()` judges keys the same way, so a stream collecting under a tighter `maxAge` does
-not make the reconnect sweep refresh it — an elapsed server `freshFor` or a finite store TTL is what
-does.
+`revalidateActive()` is the exception: it has no `maxAge` parameter of its own but it *honours* the
+one each active stream declared, judging every key against the bars its collectors are holding it to
+and refreshing if any of them considers the entry stale. So `stream(key, maxAge = 30.seconds)` is
+swept on 30 seconds, even under the default infinite TTL, and the tightest bar wins when several
+streams share a key — they all share the single resulting fetch anyway.
 
 ### Streams keep every observer coherent
 
@@ -474,8 +478,9 @@ re-permits a fetch of that key (records carry no value, so it never resurrects d
 ### Refresh on reconnect (or foreground)
 
 `revalidateActive()` refreshes exactly the keys someone is currently looking at — active
-streams — and only if their entries are stale or missing. `aquifer-android` ships the two
-triggers every app wants:
+streams — and only if their entries are stale or missing, staleness being judged against each
+stream's own `maxAge` where it declared one. `aquifer-android` ships the two triggers every app
+wants:
 
 ```kotlin
 users.revalidateOnReconnect(context)   // internet restored (ConnectivityManager-backed)
