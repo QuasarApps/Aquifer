@@ -102,8 +102,13 @@ internal class RealAquifer<K : Any, V : Any>(
             null
         }
 
-    /** Reference counts of keys with active, fetch-capable stream collectors. */
-    private val activeKeys = ConcurrentHashMap<K, Int>()
+    /**
+     * Keys with active, fetch-capable stream collectors, each mapped to the `maxAge` bars its
+     * collectors are holding it to. [revalidateActive] judges staleness against those bars rather
+     * than the store-wide TTL alone, so a `stream(key, maxAge = 30.seconds)` is swept on the
+     * horizon its caller asked for.
+     */
+    private val activeKeys = ConcurrentHashMap<K, ActiveBars>()
 
     /**
      * Write-epoch fencing: every mutation ([put], [invalidate], [invalidateAll]) advances the
@@ -237,11 +242,11 @@ internal class RealAquifer<K : Any, V : Any>(
             // CacheOnly collectors never fetch on their own behalf, so they don't make a key
             // "active" for revalidation purposes either.
             val countsAsActive = freshness != Freshness.CacheOnly
-            if (countsAsActive) registerActive(key)
+            if (countsAsActive) registerActive(key, maxAge)
             try {
                 collectStates(key, freshness, maxAge)
             } finally {
-                if (countsAsActive) unregisterActive(key)
+                if (countsAsActive) unregisterActive(key, maxAge)
             }
         }.distinctUntilChanged()
     }
@@ -855,10 +860,20 @@ internal class RealAquifer<K : Any, V : Any>(
 
     override suspend fun revalidateActive() {
         checkOpen()
-        for (key in activeKeys.keys) {
+        for ((key, bars) in activeKeys) {
             val entry = load(key)?.entry
+            // Refresh if *any* collector on this key considers the entry stale — equivalently,
+            // judge against the tightest bar asked for. They all share the one fetch, so
+            // satisfying the strictest collector satisfies the rest for free.
             val stale = entry == null ||
-                isExpired(key, entry.writtenAtMillis, entryFreshFor = entry.serverFreshForMillis?.milliseconds)
+                bars.bars.any { maxAge ->
+                    isExpired(
+                        key,
+                        entry.writtenAtMillis,
+                        maxAge = maxAge,
+                        entryFreshFor = entry.serverFreshForMillis?.milliseconds,
+                    )
+                }
             if (stale && suppression(key) == null) refresh(key)
         }
     }
@@ -897,23 +912,26 @@ internal class RealAquifer<K : Any, V : Any>(
     }
 
     // CAS loops on ConcurrentMap primitives instead of merge/computeIfPresent: those default
-    // methods only exist on Android API 24+, and aquifer-core supports API 21.
-    private fun registerActive(key: K) {
+    // methods only exist on Android API 24+, and aquifer-core supports API 21. ActiveBars is
+    // immutable so `replace(key, old, new)` stays a plain compare-and-set; it keeps identity
+    // equality, so a losing CAS simply retries against whatever the winner installed.
+    private fun registerActive(key: K, maxAge: Duration?) {
         while (true) {
             val current = activeKeys[key]
             when {
-                current == null -> if (activeKeys.putIfAbsent(key, 1) == null) return
-                else -> if (activeKeys.replace(key, current, current + 1)) return
+                current == null -> if (activeKeys.putIfAbsent(key, ActiveBars.of(maxAge)) == null) return
+                else -> if (activeKeys.replace(key, current, current.plus(maxAge))) return
             }
         }
     }
 
-    private fun unregisterActive(key: K) {
+    private fun unregisterActive(key: K, maxAge: Duration?) {
         while (true) {
             val current = activeKeys[key] ?: return
+            val remaining = current.minus(maxAge)
             when {
-                current <= 1 -> if (activeKeys.remove(key, current)) return
-                else -> if (activeKeys.replace(key, current, current - 1)) return
+                remaining == null -> if (activeKeys.remove(key, current)) return
+                else -> if (activeKeys.replace(key, current, remaining)) return
             }
         }
     }

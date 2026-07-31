@@ -375,8 +375,13 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * whose server horizon has elapsed is still refreshed, but one carrying no horizon never counts
      * as stale — so a sweep over such entries refreshes only keys with nothing cached. Configure
      * `freshness { timeToLive = … }` for it to do the work its name implies.
-     * The sweep also ignores a stream's per-call `maxAge`: a stream collecting against a tighter
-     * bar is still judged here by the store-wide TTL.
+     *
+     * A collector's per-call `maxAge` takes precedence here exactly as it does on the read that
+     * declared it. When several streams collect one key the sweep judges the entry against **each**
+     * of their bars and refreshes if any considers it stale — the tightest bar wins, and since they
+     * all share the single resulting fetch, satisfying it satisfies the rest. A `maxAge` therefore
+     * makes a key eligible for reconnect revalidation even under the default
+     * [Duration.INFINITE] TTL.
      *
      * This is the building block for "refresh when the app comes back online / to the
      * foreground" behaviour — see [revalidateOn].

@@ -196,17 +196,22 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   reads where one `readAll` would do. On the fetch side the sweep's per-key `refresh()` calls are
   merged only by the single accumulator, which exists solely when a plain `batchFetcher` is paired
   with a positive `coalesceWindow`; `fetcher`, `conditionalFetcher`, `conditionalBatchFetcher` and a
-  window-less `batchFetcher` all stay N calls, so the gap is every store without that window. It
-  also cannot see per-stream freshness — `activeKeys`
-  is a bare `ConcurrentHashMap<K, Int>` refcount — so a `stream(key, maxAge = 30.seconds)` is
-  revalidated against the store-wide TTL instead of the bar its caller asked for. And under the
-  **default** `timeToLive = Duration.INFINITE` an entry carrying no server-declared `freshFor` is
-  never expired, so a store built with no `freshness { }` block revalidates *only the active keys
-  with nothing cached, plus any whose server horizon has elapsed* on reconnect, while looking like
-  it refreshes everything on screen.
-  Batch the staleness check and the refresh through the bulk SPI, carry each registration's
-  `maxAge` alongside the refcount, and add an explicit "refresh every active key regardless of
-  staleness" escape hatch — pull-to-refresh has no way to express that today. *(M)*
+  window-less `batchFetcher` all stay N calls, so the gap is every store without that window.
+
+  **Per-stream freshness is shipped.** `activeKeys` was a bare `ConcurrentHashMap<K, Int>` refcount,
+  so a `stream(key, maxAge = 30.seconds)` was revalidated against the store-wide TTL instead of the
+  bar its caller asked for. It now maps each key to the multiset of `maxAge` bars its collectors
+  declared, and the sweep refreshes when *any* of them considers the entry stale — the tightest bar
+  wins, and they share the one resulting fetch regardless. That also draws the sting from the
+  **default** `timeToLive = Duration.INFINITE`, under which an entry carrying no server-declared
+  `freshFor` never expires: such a store used to revalidate *only the active keys with nothing
+  cached, plus any whose server horizon had elapsed* while looking like it refreshed everything on
+  screen, and a stream that declares a `maxAge` is now eligible too. A multiset rather than a single
+  tightest bar because unregistration has to drop exactly the bar its own stream added.
+
+  **Still open, both independent of that:** batch the staleness check and the refresh through the
+  bulk SPI, and add an explicit "refresh every active key regardless of staleness" escape hatch —
+  pull-to-refresh has no way to express that today. *(M, part shipped)*
 - [ ] **Decide what a local `put` does to the validator** — `put`/`putAll` write
   `PersistedEntry(value, now)`, silently dropping the entry's `validator` and
   `serverFreshForMillis`. So a locally written key loses its ETag and its next conditional fetch

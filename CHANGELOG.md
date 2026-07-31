@@ -7,6 +7,17 @@ versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- `revalidateActive()` — and with it `revalidateOn`, `revalidateOnReconnect` and
+  `revalidateOnAppForeground` — now judges each active key against the per-call `maxAge` its stream
+  collectors declared, instead of against the store-wide TTL alone. `stream(key, maxAge = 30.seconds)`
+  is therefore swept on the horizon its caller asked for, including under the default
+  `timeToLive = Duration.INFINITE`, where such a key was previously never eligible for reconnect
+  revalidation at all. Where several streams collect one key the tightest bar wins; they share the
+  single resulting fetch as before. No signature changed — a store whose streams pass no `maxAge`
+  behaves exactly as it did.
+
 ### Added
 
 - A [Coming from Store5](docs/coming-from-store5.md) migration guide: concept mapping, side-by-side
