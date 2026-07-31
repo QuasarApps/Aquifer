@@ -237,16 +237,21 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   state through refresh regardless.
 
   **The force knob is shipped**, as `revalidateActive(force = false)` — a defaulted parameter
-  rather than a second method, so the two behaviours stay visibly one operation and every existing
-  caller is source-compatible. Pull-to-refresh had no way to express itself before: every route
+  rather than a second method, so the two behaviours stay visibly one operation and Kotlin call
+  sites written `revalidateActive()` recompile untouched. Only those: the interface method's JVM
+  descriptor gains the boolean, so pre-compiled code fails to link, Java call sites must pass the
+  argument, and direct `Aquifer` implementors must update their override — breaking rather than
+  additive, as the changelog entry spells out. Pull-to-refresh had no way to express itself before: every route
   into the sweep judged staleness first, which is exactly what a user yanking the list down is
   overriding. The deliberate limit is that `force` overrides *staleness only* — a key inside a
   negative-cache suppression window is still skipped, since that window remembers a failing
   endpoint rather than a fresh value and a sweep touches every key on screen at once, so bypassing
   it would turn one gesture into a burst against a backend already known to be down. `fresh(key)`
-  stays the per-key override that ignores the failure memory as well. A forced sweep on a store
-  with no `conditionalFetcher` also reads no storage, since loading first only ever served the
-  judgement it is skipping. *(M, only fetch batching left)*
+  stays the per-key override that ignores the failure memory as well. A forced sweep on a
+  *non-conditional* store also reads no storage, since loading first only ever served the judgement
+  it is skipping — non-conditional meaning neither `conditionalFetcher` nor
+  `conditionalBatchFetcher`, both of which mark the store validator-aware and so still need the
+  entries loaded. *(M, only fetch batching left)*
 - [ ] **Decide what a local `put` does to the validator** — `put`/`putAll` write
   `PersistedEntry(value, now)`, silently dropping the entry's `validator` and
   `serverFreshForMillis`. So a locally written key loses its ETag and its next conditional fetch

@@ -389,8 +389,10 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * pull-to-refresh, where the user pulling the list down is precisely an instruction to
      * disregard the freshness bars the app itself chose. Everything else is unchanged: fetches are
      * still shared per key, still epoch-fenced, and [Freshness.CacheOnly]-only keys are still not
-     * active. A forced sweep on a store with no conditional fetcher also reads no storage at all,
-     * since the only reason to load an entry first was to judge it.
+     * active. A forced sweep also reads no storage at all when the store is not validator-aware —
+     * that is, configured with neither `conditionalFetcher` nor `conditionalBatchFetcher` — since
+     * the only reason to load an entry first was to judge it. Either of those still loads, to
+     * replay each entry's validator.
      *
      * **[force] overrides staleness, not negative caching.** A key inside a
      * [NegativeCacheConfig] suppression window is still skipped, because that window records a

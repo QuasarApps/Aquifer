@@ -15,8 +15,10 @@ versions may contain breaking changes.
   `force` overrides staleness but **not** negative caching: a key inside a suppression window is
   still skipped, because that window remembers a failing endpoint rather than a fresh value and a
   sweep touches every key on screen at once; `fresh(key)` remains the per-key override that ignores
-  the failure memory. A forced sweep on a store with no `conditionalFetcher` also reads no storage
-  at all, since loading an entry first only ever served the staleness judgement.
+  the failure memory. A forced sweep on a *non-conditional* store also reads no storage at all,
+  since loading an entry first only ever served the staleness judgement — non-conditional meaning
+  neither `conditionalFetcher` nor `conditionalBatchFetcher`, since either marks the store
+  validator-aware and the entries are still needed to replay validators.
 
   The parameter defaults to `false`, so **behaviour** is unchanged for every existing caller —
   including `revalidateOn`, `revalidateOnReconnect` and `revalidateOnAppForeground`, which always
