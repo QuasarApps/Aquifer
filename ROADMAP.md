@@ -252,15 +252,6 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   it is skipping — non-conditional meaning neither `conditionalFetcher` nor
   `conditionalBatchFetcher`, both of which mark the store validator-aware and so still need the
   entries loaded. *(M, only fetch batching left)*
-- [ ] **Decide what a local `put` does to the validator** — `put`/`putAll` write
-  `PersistedEntry(value, now)`, silently dropping the entry's `validator` and
-  `serverFreshForMillis`. So a locally written key loses its ETag and its next conditional fetch
-  goes out unconditional: a full-body download where a 304 was available, on precisely the keys an
-  app edits most. Dropping is *defensible* — a 304 against a stale validator would re-age a
-  locally modified value as though the server had confirmed it. The drop is now documented (in
-  `put`/`putAll`'s KDoc and the README's *What Aquifer is not*); what remains is the design call:
-  keep dropping it, or retain the validator behind a "locally modified" marker that suppresses the
-  re-age so an edited key can still take a 304. *(S)*
 - [ ] **[#12](https://github.com/QuasarApps/aquifer/issues/12) — benchmark, then stripe the commit guard** *(deferred)* — a JMH-style harness for
   concurrent commit throughput against a real file store, then per-key lock striping only if the
   numbers justify it (constraints documented in the issue). Deferred for two reasons: with zero
@@ -333,6 +324,28 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   #51 wired `okHttpConditionalFetcher(respectCacheControl = true)` to parse `max-age` (minus
   `Age`), `no-store`/`no-cache`/`max-age=0` → immediately stale, and `Expires` as a fallback.
   Opt-in, so *the app declares how fresh data must be* stays the default stance. *(M)*
+- [x] **Decide what a local `put` does to the validator** (decided — keep dropping) — `put`/`putAll`
+  write `PersistedEntry(value, now)`, dropping the entry's `validator` and `serverFreshForMillis`,
+  so a locally written key loses its ETag and its next conditional fetch goes out unconditional: a
+  full-body download where a 304 looked available, on precisely the keys an app edits most. The
+  alternative on the table was retaining the validator behind a "locally modified" marker that
+  suppressed the re-age.
+
+  **It doesn't work, and the reason is sharper than "a 304 would re-age a local value".** A
+  validator identifies the *server's* representation; after a local `put` the cached body is not
+  that representation, so the token no longer describes what is held. Follow both branches: on
+  `304` the server is saying *"I still hold the version you overwrote"* — no body to reconcile
+  against, and `resolve()` commits `NotModified` as `prior.value`, i.e. it would publish the local
+  edit as server-confirmed. On `200` the response carries a full body regardless, which is exactly
+  today's behaviour. So the validator can only pay off in the 304 case, and the 304 case is the one
+  where its answer is useless. Retaining it buys no bandwidth and costs correctness.
+
+  Making it useful would mean keeping the pre-edit server body alongside the local one so a 304
+  could raise a conflict — which is an outbox with conflict handling, i.e. the **Offline mutations**
+  (`aquifer-mutations`) item in 0.6, not a knob on `put`. This is therefore a consequence of `put` not being
+  a mutation queue rather than a missing optimization, and the KDoc, README and this entry now say
+  so instead of calling the drop merely "defensible". Behaviour unchanged; pinned by
+  `a local put clears the validator`. *(S)*
 
 ## 0.4 — Persistence expansion
 

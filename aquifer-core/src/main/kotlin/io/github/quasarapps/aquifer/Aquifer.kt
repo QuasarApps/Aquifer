@@ -223,6 +223,15 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * store-wide [FreshnessConfig.timeToLive] as shortened by [FreshnessConfig.ttlJitter], with no
      * server-declared horizon to override it.
      *
+     * Dropping the validator is deliberate, not a missing optimization. A validator identifies the
+     * *server's* representation, and after this write the cached body is no longer that
+     * representation — so keeping it would buy nothing in either direction. A `304` would mean
+     * "the server still holds the version you overwrote", which arrives with no body to reconcile
+     * against and which [FetchResult.NotModified] would commit as the local value, re-aged as
+     * though the server had confirmed it; and when the server *has* changed, the response is a
+     * full body anyway, exactly as it is now. Reconciling a local edit against the server's
+     * version needs the outbox and conflict handling that `put` deliberately does not have.
+     *
      * This is a local write, **not** a pending mutation: there is no rollback and no retry queue.
      * Under the staleness-aware strategies the written value stands until it goes stale; from then
      * on the first *successful, unfenced* fetch of [key] silently overwrites it, with no event
@@ -244,7 +253,9 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * The write is local only; pushing the changes to your backend remains the caller's
      * responsibility. Each entry carries the same consequences as a single [put]: no
      * [validator][PersistedEntry.validator] and no server freshness horizon, so a stored validator
-     * for a written key is dropped and its next conditional fetch is unconditional, with staleness
+     * for a written key is dropped and its next conditional fetch is unconditional — deliberately,
+     * for the reason [put] gives: a validator describes the server's representation, which the
+     * written body no longer is. Staleness is
      * left to a per-call `maxAge` when one is passed and otherwise to the store-wide
      * [FreshnessConfig.timeToLive] as shortened by [FreshnessConfig.ttlJitter]. These are local
      * writes, not pending
