@@ -194,64 +194,6 @@ What every consuming app touches daily; highest user-facing leverage.
 
 Make the fetch path cheap and stampede-proof under real-world conditions.
 
-- [ ] **Fix `revalidateActive()` — batch its *fetches*** — the reconnect path walked `activeKeys`
-  doing a per-key `load()` then `refresh()`. The read half, the per-stream `maxAge` half and the
-  force knob have all since shipped; batching the *fetches* is the one part left.
-
-  **The read side is shipped.** `load()` returns from memory first, so the storage hit was per
-  *non-resident* active key rather than per key — but on the cold reconnect that matters (process
-  resumed, memory shed) that is precisely when every key is a miss, so it was N sequential reads on
-  the path most likely to be cold. The sweep now snapshots the active set and resolves it through
-  the existing `loadAll`, which issues a batched `SourceOfTruth.readAll` with the same epoch fencing
-  and residual-hydration guard `load` applies — so a store overriding `readAll` serves the whole
-  sweep as one bulk lookup, and one leaving it at the per-key default is no worse off than before.
-  "Bulk", not "a single query": `loadAll` re-reads under the commit lock when a write races the
-  first read, and the SQLDelight adapter chunks at SQLite's host-parameter cap, so a wide active set
-  is still several statements.
-
-  **Per-stream freshness is shipped.** `activeKeys` was a bare `ConcurrentHashMap<K, Int>` refcount,
-  so a `stream(key, maxAge = 30.seconds)` was revalidated against the store-wide TTL instead of the
-  bar its caller asked for. It now maps each key to the multiset of `maxAge` bars its collectors
-  declared, and the sweep refreshes when *any* of them considers the entry stale — the tightest bar
-  wins, and they share the one resulting fetch regardless. That also draws the sting from the
-  **default** `timeToLive = Duration.INFINITE`, under which an entry carrying no server-declared
-  `freshFor` never expires: such a store used to revalidate *only the active keys with nothing
-  cached, plus any whose server horizon had elapsed* while looking like it refreshed everything on
-  screen, and a stream that declares a `maxAge` is now swept on that bar once it elapses. A multiset
-  rather than a single tightest bar, because unregistration has to drop exactly the bar its own
-  stream added.
-
-  **The fetch side is still open.** The sweep's per-key `refresh()` calls are merged only by the
-  single accumulator, which exists solely when a plain `batchFetcher` is paired with a positive
-  `coalesceWindow`; `fetcher`, `conditionalFetcher`, `conditionalBatchFetcher` and a window-less
-  `batchFetcher` all stay N calls, so the gap is every store without that window. Harder than the
-  read side: a batched refresh has to keep per-key single-flight, fencing and negative-cache
-  behaviour intact, which is what `getAll`'s transport already does — the work is routing the sweep
-  through it rather than inventing a second path.
-
-  It should also take the sweep's *validator* reads with it. On a conditional store `refreshWith`
-  looks each entry up again for its validator, and the sweep's batched load only warms memory for
-  it — an active set wider than `maxEntries` evicts those entries before the refresh bodies run, so
-  the per-key reads come back. Handing the already-loaded (and already-fenced) snapshots to the
-  refresh path fixes it, and is natural to do at the same time, since batching has to thread per-key
-  state through refresh regardless.
-
-  **The force knob is shipped**, as `revalidateActive(force = false)` — a defaulted parameter
-  rather than a second method, so the two behaviours stay visibly one operation and Kotlin call
-  sites written `revalidateActive()` recompile untouched. Only those: the interface method's JVM
-  descriptor gains the boolean, so pre-compiled code fails to link, Java call sites must pass the
-  argument, and direct `Aquifer` implementors must update their override — breaking rather than
-  additive, as the changelog entry spells out. Pull-to-refresh had no way to express itself before: every route
-  into the sweep judged staleness first, which is exactly what a user yanking the list down is
-  overriding. The deliberate limit is that `force` overrides *staleness only* — a key inside a
-  negative-cache suppression window is still skipped, since that window remembers a failing
-  endpoint rather than a fresh value and a sweep touches every key on screen at once, so bypassing
-  it would turn one gesture into a burst against a backend already known to be down. `fresh(key)`
-  stays the per-key override that ignores the failure memory as well. A forced sweep on a
-  *non-conditional* store also reads no storage, since loading first only ever served the judgement
-  it is skipping — non-conditional meaning neither `conditionalFetcher` nor
-  `conditionalBatchFetcher`, both of which mark the store validator-aware and so still need the
-  entries loaded. *(M, only fetch batching left)*
 - [ ] **[#12](https://github.com/QuasarApps/aquifer/issues/12) — benchmark, then stripe the commit guard** *(deferred)* — a JMH-style harness for
   concurrent commit throughput against a real file store, then per-key lock striping only if the
   numbers justify it (constraints documented in the issue). Deferred for two reasons: with zero
@@ -350,6 +292,71 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   a mutation queue rather than a missing optimization, and the KDoc, README and this entry now say
   so instead of calling the drop merely "defensible". Behaviour unchanged; pinned by
   `a local put clears the validator`. *(S)*
+- [x] **Fix `revalidateActive()` — batch it, honor per-stream `maxAge`, add a force knob** — the
+  reconnect path walked `activeKeys` doing a per-key `load()` then `refresh()`. All four parts have
+  shipped: batched reads, per-stream `maxAge`, the force knob, and batched fetches.
+
+  **The read side is shipped.** `load()` returns from memory first, so the storage hit was per
+  *non-resident* active key rather than per key — but on the cold reconnect that matters (process
+  resumed, memory shed) that is precisely when every key is a miss, so it was N sequential reads on
+  the path most likely to be cold. The sweep now snapshots the active set and resolves it through
+  the existing `loadAll`, which issues a batched `SourceOfTruth.readAll` with the same epoch fencing
+  and residual-hydration guard `load` applies — so a store overriding `readAll` serves the whole
+  sweep as one bulk lookup, and one leaving it at the per-key default is no worse off than before.
+  "Bulk", not "a single query": `loadAll` re-reads under the commit lock when a write races the
+  first read, and the SQLDelight adapter chunks at SQLite's host-parameter cap, so a wide active set
+  is still several statements.
+
+  **Per-stream freshness is shipped.** `activeKeys` was a bare `ConcurrentHashMap<K, Int>` refcount,
+  so a `stream(key, maxAge = 30.seconds)` was revalidated against the store-wide TTL instead of the
+  bar its caller asked for. It now maps each key to the multiset of `maxAge` bars its collectors
+  declared, and the sweep refreshes when *any* of them considers the entry stale — the tightest bar
+  wins, and they share the one resulting fetch regardless. That also draws the sting from the
+  **default** `timeToLive = Duration.INFINITE`, under which an entry carrying no server-declared
+  `freshFor` never expires: such a store used to revalidate *only the active keys with nothing
+  cached, plus any whose server horizon had elapsed* while looking like it refreshed everything on
+  screen, and a stream that declares a `maxAge` is now swept on that bar once it elapses. A multiset
+  rather than a single tightest bar, because unregistration has to drop exactly the bar its own
+  stream added.
+
+  **The fetch side is shipped.** The sweep's per-key `refresh()` calls used to be merged only by
+  the accumulator, which exists solely when a plain `batchFetcher` is paired with a positive
+  `coalesceWindow`; `conditionalBatchFetcher` and a window-less `batchFetcher` stayed N calls. The
+  sweep now collects the keys it decided to refresh and hands them to `startBatch` — `getAll`'s
+  transport — so one call covers the screen. Routing rather than reinventing is what made it small:
+  the per-key slices are `refreshWith` registrations, so single-flight, epoch fencing and per-key
+  events are untouched by construction, and a key already in flight joins that fetch instead of
+  being re-requested. Skipped keys (fresh, `CacheOnly`-only, negative-cached) are filtered before
+  the call, so suppression still holds. Two honest limits: a store with only a single-key
+  `fetcher`/`conditionalFetcher` has no multi-key transport, so it still issues one fetch per stale
+  key and always will; and a coalescing store now dispatches immediately instead of feeding the
+  accumulator, matching `getAll`.
+
+  It took most of the sweep's *validator* reads with it, as hoped, though not by threading
+  snapshots: `runBatch` gathers validators through its own single `loadAll`, so a
+  `conditionalBatchFetcher` sweep reads once for the whole set. What remains is the single-key
+  `conditionalFetcher` case, where each `refreshWith` still looks its entry up individually — the
+  store that cannot batch its fetches cannot batch these either. Handing the sweep's already-loaded
+  snapshots to the refresh path would close it, at the cost of moving a read that sits inside the
+  fetch body on purpose ("the entry as it stood when the fetch started"), so it needs its own
+  change and its own Lincheck run rather than riding along here.
+
+  **The force knob is shipped**, as `revalidateActive(force = false)` — a defaulted parameter
+  rather than a second method, so the two behaviours stay visibly one operation and Kotlin call
+  sites written `revalidateActive()` recompile untouched. Only those: the interface method's JVM
+  descriptor gains the boolean, so pre-compiled code fails to link, Java call sites must pass the
+  argument, and direct `Aquifer` implementors must update their override — breaking rather than
+  additive, as the changelog entry spells out. Pull-to-refresh had no way to express itself before: every route
+  into the sweep judged staleness first, which is exactly what a user yanking the list down is
+  overriding. The deliberate limit is that `force` overrides *staleness only* — a key inside a
+  negative-cache suppression window is still skipped, since that window remembers a failing
+  endpoint rather than a fresh value and a sweep touches every key on screen at once, so bypassing
+  it would turn one gesture into a burst against a backend already known to be down. `fresh(key)`
+  stays the per-key override that ignores the failure memory as well. A forced sweep on a
+  *non-conditional* store also reads no storage, since loading first only ever served the judgement
+  it is skipping — non-conditional meaning neither `conditionalFetcher` nor
+  `conditionalBatchFetcher`, both of which mark the store validator-aware and so still need the
+  entries loaded. *(M, only fetch batching left)*
 
 ## 0.4 — Persistence expansion
 
