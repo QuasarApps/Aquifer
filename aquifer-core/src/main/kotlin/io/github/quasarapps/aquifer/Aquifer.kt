@@ -223,6 +223,23 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * store-wide [FreshnessConfig.timeToLive] as shortened by [FreshnessConfig.ttlJitter], with no
      * server-declared horizon to override it.
      *
+     * Dropping the validator is deliberate, not a missing optimization — though it does forgo a
+     * real saving, so the trade is worth stating exactly.
+     *
+     * A validator identifies the *server's* representation, and after this write the cached body is
+     * no longer that representation. Keeping it **would** save bandwidth when the server is
+     * unchanged: a bodyless `304` instead of a full-body `200`. What it would not do is leave the
+     * store able to use the answer. A `304` here means "the server still holds the version you
+     * overwrote" — no body arrives, and [FetchResult.NotModified] commits the *prior* entry, so the
+     * store would publish the local edit re-aged as though the server had confirmed it. Consuming
+     * that response safely needs local-modification and conflict state Aquifer does not keep.
+     *
+     * The saving is also the wrong one to want. A refresh of a locally written key exists to
+     * replace that write with the server's version, which is what the unconditional `200` delivers;
+     * the `304` saves the body by declining to send the very thing being asked for. Reconciling a
+     * local edit against the server's version instead needs the outbox and conflict handling that
+     * `put` deliberately does not have.
+     *
      * This is a local write, **not** a pending mutation: there is no rollback and no retry queue.
      * Under the staleness-aware strategies the written value stands until it goes stale; from then
      * on the first *successful, unfenced* fetch of [key] silently overwrites it, with no event
@@ -244,7 +261,9 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * The write is local only; pushing the changes to your backend remains the caller's
      * responsibility. Each entry carries the same consequences as a single [put]: no
      * [validator][PersistedEntry.validator] and no server freshness horizon, so a stored validator
-     * for a written key is dropped and its next conditional fetch is unconditional, with staleness
+     * for a written key is dropped and its next conditional fetch is unconditional — deliberately,
+     * for the reason [put] gives: a validator describes the server's representation, which the
+     * written body no longer is. Staleness is
      * left to a per-call `maxAge` when one is passed and otherwise to the store-wide
      * [FreshnessConfig.timeToLive] as shortened by [FreshnessConfig.ttlJitter]. These are local
      * writes, not pending
