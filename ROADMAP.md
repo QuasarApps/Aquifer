@@ -194,6 +194,18 @@ What every consuming app touches daily; highest user-facing leverage.
 
 Make the fetch path cheap and stampede-proof under real-world conditions.
 
+- [ ] **Stop the refresh path re-reading each entry for its validator** — on any validator-aware
+  store (`conditionalFetcher` *or* `conditionalBatchFetcher`), every `refreshWith` slice calls
+  `load(key)` to obtain `prior` before invoking the transport, and feeds it to `resolve()` as what a
+  `NotModified` resolves against. That read is load-bearing, so it cannot simply be deleted — and
+  batching the sweep's fetches did nothing for it, because each slice still makes its own. A caller
+  that has *already* loaded and fenced the entry — `revalidateActive`'s sweep does exactly this —
+  pays for it twice, and on an active set wider than `memoryCache.maxEntries` the second read hits
+  persistence per key because the first only warmed memory. Fix by letting a caller hand its
+  snapshot to the refresh path instead of having it re-read. The catch, and why this is its own
+  change: the read sits inside the fetch body deliberately ("the entry as it stood when the fetch
+  started"), so moving it interacts with epoch and sequencer fencing and needs a Lincheck run of its
+  own. *(S–M)*
 - [ ] **[#12](https://github.com/QuasarApps/aquifer/issues/12) — benchmark, then stripe the commit guard** *(deferred)* — a JMH-style harness for
   concurrent commit throughput against a real file store, then per-key lock striping only if the
   numbers justify it (constraints documented in the issue). Deferred for two reasons: with zero
@@ -332,14 +344,19 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   key and always will; and a coalescing store now dispatches immediately instead of feeding the
   accumulator, matching `getAll`.
 
-  It took most of the sweep's *validator* reads with it, as hoped, though not by threading
-  snapshots: `runBatch` gathers validators through its own single `loadAll`, so a
-  `conditionalBatchFetcher` sweep reads once for the whole set. What remains is the single-key
-  `conditionalFetcher` case, where each `refreshWith` still looks its entry up individually — the
-  store that cannot batch its fetches cannot batch these either. Handing the sweep's already-loaded
-  snapshots to the refresh path would close it, at the cost of moving a read that sits inside the
-  fetch body on purpose ("the entry as it stood when the fetch started"), so it needs its own
-  change and its own Lincheck run rather than riding along here.
+  It did **not** take the sweep's *validator* reads with it, which the earlier plan assumed it
+  would. `runBatch` does gather validators through a single `loadAll`, but that is on top of, not
+  instead of, the per-key read: `refreshWith` computes `prior` via `load(key)` before invoking any
+  transport and then feeds it to `resolve()`, which is what a `NotModified` resolves against — so
+  the read is load-bearing, not incidental, and every slice still makes it. On a wide active set
+  (more keys than `memoryCache.maxEntries`) those degrade to per-key persistence reads exactly as
+  before, since the sweep's own batched load only warms memory and the warming is best-effort.
+
+  So batching the *fetches* did nothing for the validator reads on either conditional path. Closing
+  that means handing the sweep's already-loaded, already-fenced snapshots to the refresh path so it
+  stops re-reading — which moves a read that sits inside the fetch body on purpose ("the entry as it
+  stood when the fetch started"), and therefore wants its own change and its own Lincheck run rather
+  than riding along with a routing patch. **Left open below.**
 
   **The force knob is shipped**, as `revalidateActive(force = false)` — a defaulted parameter
   rather than a second method, so the two behaviours stay visibly one operation and Kotlin call
@@ -356,7 +373,7 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   *non-conditional* store also reads no storage, since loading first only ever served the judgement
   it is skipping — non-conditional meaning neither `conditionalFetcher` nor
   `conditionalBatchFetcher`, both of which mark the store validator-aware and so still need the
-  entries loaded. *(M, only fetch batching left)*
+  entries loaded. *(M, shipped)*
 
 ## 0.4 — Persistence expansion
 

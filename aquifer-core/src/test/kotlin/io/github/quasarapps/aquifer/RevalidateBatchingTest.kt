@@ -173,4 +173,55 @@ class RevalidateBatchingTest {
             streams.forEach { it.cancelAndIgnoreRemainingEvents() }
         }
     }
+
+    @Test
+    fun `a conditional batch sweep sends one validator map and resolves each key`() = runTest {
+        val clock = FakeClock()
+        val calls = mutableListOf<Map<String, String?>>()
+        var swept = false
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            // Distinct from the plain-batchFetcher case above: this path gathers validators and
+            // resolves NotModified per key, so batching it needs coverage of its own.
+            conditionalBatchFetcher { validators ->
+                calls += validators
+                validators.mapValues { (key, _) ->
+                    when {
+                        // The sweep: k1 is unchanged upstream, k2 has moved on.
+                        swept && key == "k1" -> FetchResult.NotModified
+                        swept -> FetchResult.Fresh(99, validator = "etag-k2-v2")
+                        // The initial per-key fetches, which store the validators.
+                        else -> FetchResult.Fresh(key.last().digitToInt(), validator = "etag-$key-v1")
+                    }
+                }
+            }
+            freshness { timeToLive = 1.minutes }
+        }
+
+        turbineScope {
+            val first = store.stream("k1").testIn(backgroundScope)
+            val second = store.stream("k2").testIn(backgroundScope)
+            first.awaitItem() // Loading
+            second.awaitItem()
+            settle()
+
+            clock.advanceBy(10.minutes) // both entries stale
+            calls.clear()
+            swept = true
+            store.revalidateActive()
+            settle()
+
+            // One call carrying both keys, each with the validator its first fetch stored.
+            assertEquals(1, calls.size)
+            assertEquals(mapOf("k1" to "etag-k1-v1", "k2" to "etag-k2-v1"), calls.single())
+
+            // NotModified keeps k1's cached value; k2 takes the fresh one.
+            assertEquals(1, store.get("k1", Freshness.CacheOnly))
+            assertEquals(99, store.get("k2", Freshness.CacheOnly))
+
+            first.cancelAndIgnoreRemainingEvents()
+            second.cancelAndIgnoreRemainingEvents()
+        }
+    }
 }
