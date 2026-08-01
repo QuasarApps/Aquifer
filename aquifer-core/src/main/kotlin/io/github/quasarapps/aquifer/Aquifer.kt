@@ -223,14 +223,22 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * store-wide [FreshnessConfig.timeToLive] as shortened by [FreshnessConfig.ttlJitter], with no
      * server-declared horizon to override it.
      *
-     * Dropping the validator is deliberate, not a missing optimization. A validator identifies the
-     * *server's* representation, and after this write the cached body is no longer that
-     * representation — so keeping it would buy nothing in either direction. A `304` would mean
-     * "the server still holds the version you overwrote", which arrives with no body to reconcile
-     * against and which [FetchResult.NotModified] would commit as the local value, re-aged as
-     * though the server had confirmed it; and when the server *has* changed, the response is a
-     * full body anyway, exactly as it is now. Reconciling a local edit against the server's
-     * version needs the outbox and conflict handling that `put` deliberately does not have.
+     * Dropping the validator is deliberate, not a missing optimization — though it does forgo a
+     * real saving, so the trade is worth stating exactly.
+     *
+     * A validator identifies the *server's* representation, and after this write the cached body is
+     * no longer that representation. Keeping it **would** save bandwidth when the server is
+     * unchanged: a bodyless `304` instead of a full-body `200`. What it would not do is leave the
+     * store able to use the answer. A `304` here means "the server still holds the version you
+     * overwrote" — no body arrives, and [FetchResult.NotModified] commits the *prior* entry, so the
+     * store would publish the local edit re-aged as though the server had confirmed it. Consuming
+     * that response safely needs local-modification and conflict state Aquifer does not keep.
+     *
+     * The saving is also the wrong one to want. A refresh of a locally written key exists to
+     * replace that write with the server's version, which is what the unconditional `200` delivers;
+     * the `304` saves the body by declining to send the very thing being asked for. Reconciling a
+     * local edit against the server's version instead needs the outbox and conflict handling that
+     * `put` deliberately does not have.
      *
      * This is a local write, **not** a pending mutation: there is no rollback and no retry queue.
      * Under the staleness-aware strategies the written value stands until it goes stale; from then

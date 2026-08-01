@@ -119,9 +119,11 @@ can arrive sooner than the configured `timeToLive`: a tighter per-call `maxAge` 
 strategies (`NetworkFirst`, `NetworkOnly`, `fresh(key)`) do not wait for any of that, so any of them
 replaces the write immediately. That overwrite is observable only as an ordinary fetch — a new
 `DataState.Content` and `onFetchSucceeded` — with nothing to say it replaced a local write, and the
-write clears the entry's stored validator, so that fetch goes out unconditional — deliberately, since
-a validator describes the server's representation and the written body is no longer it, making a
-`304` the one answer that helps least. **An offline edit form built
+write clears the entry's stored validator, so that fetch goes out unconditional — deliberately. A
+validator describes the server's representation and the written body is no longer it, so a `304`
+would save the body while telling you only that the server still holds the version you overwrote:
+nothing to reconcile against, and no safe way to treat it as confirming the local value. **An
+offline edit form built
 on `put` alone will lose the user's edit once the entry goes stale and the next fetch lands.**
 Keep your own outbox until the planned [`aquifer-mutations`](ROADMAP.md) module lands; `put` is
 for applying a *confirmed* change (a server push, a response you already have) to the cache.
