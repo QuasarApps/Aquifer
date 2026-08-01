@@ -389,6 +389,14 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * window are skipped, and concurrent refreshes share fetches as usual. Returns once the
      * refreshes are *triggered*; results arrive through the streams.
      *
+     * With a [batchFetcher][AquiferBuilder.batchFetcher] or
+     * [conditionalBatchFetcher][AquiferBuilder.conditionalBatchFetcher] configured, the whole
+     * sweep goes out as **one** call rather than a fetch per key — through the same transport
+     * [getAll] uses, so single-flight, epoch fencing and per-key [AquiferEvents] are unchanged and
+     * a key already in flight joins that fetch instead of being re-requested. A store with only a
+     * single-key fetcher has no multi-key transport, so its sweep is still one fetch per stale key.
+     * Keys the sweep skips are never in the call.
+     *
      * Staleness is judged against the entry's own server-declared horizon when it has one
      * ([FetchResult.Fresh.freshFor]) and otherwise against the store-wide
      * [FreshnessConfig.timeToLive]. With that TTL left at its default [Duration.INFINITE], an entry

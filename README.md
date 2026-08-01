@@ -484,8 +484,9 @@ re-permits a fetch of that key (records carry no value, so it never resurrects d
 
 `revalidateActive()` refreshes exactly the keys someone is currently looking at — active
 streams — and only if their entries are stale or missing, staleness being judged against each
-stream's own `maxAge` where it declared one. `aquifer-android` ships the two triggers every app
-wants:
+stream's own `maxAge` where it declared one. With a batch fetcher configured the whole sweep goes
+out as one call rather than one per key, through the same transport `getAll` uses.
+`aquifer-android` ships the two triggers every app wants:
 
 ```kotlin
 users.revalidateOnReconnect(context)   // internet restored (ConnectivityManager-backed)

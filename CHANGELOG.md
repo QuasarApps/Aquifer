@@ -31,6 +31,16 @@ versions may contain breaking changes.
 
 ### Changed
 
+- `revalidateActive()` now issues **one** fetch for the whole sweep on a store configured with a
+  `batchFetcher` or `conditionalBatchFetcher`, instead of a fetch per stale key. It routes through
+  the same transport `getAll` uses, so per-key single-flight, epoch fencing and per-key
+  `AquiferEvents` are unchanged, and a key already in flight joins that fetch rather than being
+  re-requested; skipped keys (fresh, `CacheOnly`-only, or negative-cached) are never in the call.
+  A store with only a single-key `fetcher`/`conditionalFetcher` has no multi-key transport, so its
+  sweep still issues one fetch per stale key, exactly as before. One consequence worth naming: on a
+  store with a coalescing `batchFetcher(coalesceWindow = …)`, the sweep now dispatches immediately
+  rather than feeding the accumulator and waiting out the window — matching what `getAll` already
+  did with its own keys.
 - `revalidateActive()` now resolves every active key through a batched `SourceOfTruth.readAll`
   instead of a `read` per key. The sweep exists for the reconnect that follows a process resume,
   which is exactly when memory has been shed and every active key is a miss — previously N
