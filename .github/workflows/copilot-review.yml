@@ -22,10 +22,18 @@ on:
   pull_request_target:
     types: [opened, reopened, ready_for_review]
 
-permissions: {}
+permissions:
+  # Minimum needed to resolve the called workflow from another repository.
+  # Not `{}`: zero permissions can leave the job unable to fetch it.
+  contents: read
 
 jobs:
   request:
+    # Same-repo PRs only. `pull_request_target` also fires for fork PRs, and
+    # while the called workflow's author gate would skip those, this stops the
+    # secret entering that context in the first place. The author gate itself
+    # stays centralised so a rename remains a one-place fix.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     uses: QuasarApps/.github/.github/workflows/copilot-review.yml@main
     # Named rather than `inherit`: inherit hands the called workflow every
     # secret this repo has, which is more than it needs and more than would
