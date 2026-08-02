@@ -13,7 +13,8 @@ import kotlin.test.assertEquals
  * overwriting a fresher commit — and it fails the moment the committed entry is evicted before the
  * read resumes. `MutationFencingTest` covers the non-evicted case (the memory re-check catches it);
  * these tests force the eviction with a one-slot memory cache and assert the fresher value still
- * wins, exercising the `sequencer`-based re-read guard.
+ * wins, exercising the re-read guard keyed on `commitGen` — the commit-only generation counter,
+ * which hydration deliberately does not advance (see `HydrationGuardTest` for that half).
  */
 class ResidualHydrationRaceTest {
 

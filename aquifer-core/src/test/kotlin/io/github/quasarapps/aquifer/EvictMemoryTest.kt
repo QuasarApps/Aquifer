@@ -234,10 +234,12 @@ class EvictMemoryTest {
     /**
      * R0 — the crown-jewel regression for the `commitFetched` persist-before-bump reorder.
      *
-     * A fetch commits "NEW" while its disk write is suspended (sequencer bump/memory write pending);
-     * `evictMemory()` drops any resident entry; a concurrent read then hydrates. Before the reorder
-     * the commit bumped the sequencer before persisting, so the read would trust its stale "OLD"
-     * pre-lock snapshot. This test fails without the reorder.
+     * A fetch commits "NEW" while its disk write is suspended (commit-sequence allocation and
+     * memory write still pending); `evictMemory()` drops any resident entry; a concurrent read then
+     * hydrates. Before the reorder the commit advanced its generation counter before persisting, so
+     * the read would trust its stale "OLD" pre-lock snapshot. The counter the guard snapshots is
+     * `commitGen`, so that is the one whose ordering against the disk write carries the property.
+     * This test fails without the reorder.
      */
     @Test
     fun `evictMemory racing a mid-persist commit does not serve stale`() = runTest {

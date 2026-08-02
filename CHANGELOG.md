@@ -31,6 +31,14 @@ versions may contain breaking changes.
 
 ### Changed
 
+- Concurrent cold reads no longer pay for each other. The residual-hydration guard — which re-reads
+  persisted state under the commit lock when a commit raced an off-lock read — was keyed on the
+  store-global sequence counter, which *hydration itself advances*. So N concurrent cold reads of
+  **different** keys cost N−1 extra reads, each taken while holding the commit lock, and on the
+  batched `loadAll` path the extra read was the whole batch again — precisely the shape of a cold
+  start or a reconnect sweep. Commits now have their own counter that hydration does not touch, so
+  the guard fires on what it was always meant to mean: a commit intervened. Correctness is unchanged
+  either way; the re-read was always authoritative, just usually unnecessary.
 - `revalidateActive()` now issues **one** fetch for the whole sweep on a store configured with a
   `batchFetcher` or `conditionalBatchFetcher`, instead of a fetch per stale key. It routes through
   the same transport `getAll` uses, so per-key single-flight, epoch fencing and per-key
