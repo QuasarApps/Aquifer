@@ -1155,11 +1155,15 @@ internal class RealAquifer<K : Any, V : Any>(
      * the negative-cache record, writes persistence and memory, and broadcasts `Updated`. A
      * mutation that raced the fetch leaves the epoch moved, and the commit is dropped.
      *
-     * Persistence is written *before* the commit sequence is allocated, matching every direct mutation
+     * Persistence is written *before* [commitSequence] is called, matching every direct mutation
      * ([put]/[invalidate]/…): that upholds the invariant the hydration guard in [load]/[loadAll]
-     * relies on — an observer seeing commit sequence *S* also sees disk at *S*. Bumping first would
-     * open a window (sequencer already *S*, disk still stale) in which an [evictMemory] dropping the
-     * just-committed entry lets a racing [load] trust its stale pre-lock snapshot.
+     * relies on — an observer seeing [commitGen] at *G* also sees disk at *G*. Advancing first would
+     * open a window ([commitGen] already *G*, disk still stale) in which an [evictMemory] dropping
+     * the just-committed entry lets a racing [load] trust its stale pre-lock snapshot.
+     *
+     * [commitGen] specifically, not [sequencer]: the guard snapshots the former, so it is the one
+     * whose ordering against the disk write carries the safety property. They advance together here
+     * only because [commitSequence] allocates both.
      */
     private suspend fun commitFetched(key: K, epoch: Epoch, resolved: Resolved<V>, now: Long) {
         val committed: MemoryCache.Entry<V>? = commitGuard.withLock {
