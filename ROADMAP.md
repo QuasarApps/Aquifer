@@ -457,10 +457,26 @@ The engine's guarantees deserve machine-checked evidence.
   for `MemoryCache`; `BoundedLruMap` has no eviction counterpart at all.) Meanwhile the code that
   *is* hand-rolled has no model-checking: `EpochFence.fence` does `keyEpochs[key] =
   (keyEpochs[key] ?: 0L) + 1L` — a non-atomic read-modify-write on a `ConcurrentHashMap`, correct
-  today only because every one of its four call sites happens to hold `commitGuard`, an invariant
-  nothing states or enforces — and `registerActive`/`unregisterActive` are hand-written CAS loops
-  over a refcount map. Keep the baseline classes for their
-  synchronization-removal coverage and add cases aimed at those two primitives.
+  today only because every one of its call sites holds `commitGuard`. That invariant *is* stated —
+  `EpochFence`'s class KDoc has a **Locking** paragraph and `fence`/`fenceAll` each repeat "must run
+  under the commit lock" — but nothing **enforces** it, which is the real gap. (An earlier revision
+  of this entry said it was unstated; it isn't.) The other hand-rolled primitive is the active-key
+  registry's CAS loops. Keep the baseline classes for their synchronization-removal coverage and add
+  cases aimed at both.
+
+  **The registry half is shipped.** Those loops lived inline in `RealAquifer` as
+  `registerActive`/`unregisterActive`; they are now `ActiveKeyRegistry`, extracted for the same
+  reason `EpochFence` was — so a Lincheck check drives the exact code, not an approximation — and
+  covered by `ActiveKeyRegistryLincheckTest` under both the stress and model-checking strategies.
+
+  Worth recording what that check taught, because it is a trap for the `EpochFence` half too: the
+  first version also asserted linearizability over `snapshot()`/`keys()`, and Lincheck rejected it
+  with a counterexample where one read saw a key registered concurrently and a *later read on the
+  same thread* did not. That is not a lost update — those two views iterate the `ConcurrentHashMap`
+  weakly and were never atomic across keys. The check belongs on the per-key state, which every
+  update genuinely compare-and-sets; the multi-key views now say in prose that nothing needing an
+  atomic cross-key view may be built on them. A verifier will happily "fail" on a property the code
+  never claimed.
   **And reopen the fencing half with the corrected framing:** the shipped item is right that epoch
   fencing is not a *linearizability* property, but that indicts the linearizability **verifier**,
   not Lincheck. The model-checking **strategy** with an `EpsilonVerifier` (accept any result) plus
