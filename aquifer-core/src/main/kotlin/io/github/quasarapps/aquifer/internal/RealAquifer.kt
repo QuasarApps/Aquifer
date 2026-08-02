@@ -39,7 +39,6 @@ import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -102,13 +101,8 @@ internal class RealAquifer<K : Any, V : Any>(
             null
         }
 
-    /**
-     * Keys with active, fetch-capable stream collectors, each mapped to the `maxAge` bars its
-     * collectors are holding it to. [revalidateActive] judges staleness against those bars rather
-     * than the store-wide TTL alone, so a `stream(key, maxAge = 30.seconds)` is swept on the
-     * horizon its caller asked for.
-     */
-    private val activeKeys = ConcurrentHashMap<K, ActiveBars>()
+    /** Keys with active, fetch-capable stream collectors; see [ActiveKeyRegistry]. */
+    private val activeKeys = ActiveKeyRegistry<K>()
 
     /**
      * Write-epoch fencing: every mutation ([put], [invalidate], [invalidateAll]) advances the
@@ -260,11 +254,11 @@ internal class RealAquifer<K : Any, V : Any>(
             // CacheOnly collectors never fetch on their own behalf, so they don't make a key
             // "active" for revalidation purposes either.
             val countsAsActive = freshness != Freshness.CacheOnly
-            if (countsAsActive) registerActive(key, maxAge)
+            if (countsAsActive) activeKeys.register(key, maxAge)
             try {
                 collectStates(key, freshness, maxAge)
             } finally {
-                if (countsAsActive) unregisterActive(key, maxAge)
+                if (countsAsActive) activeKeys.unregister(key, maxAge)
             }
         }.distinctUntilChanged()
     }
@@ -779,7 +773,7 @@ internal class RealAquifer<K : Any, V : Any>(
         // can't stall or re-enter the store while it's held.
         val inProcess = buildSet {
             addAll(memory.keys())
-            addAll(activeKeys.keys)
+            addAll(activeKeys.keys())
             addAll(epochFence.inFlightKeys())
             addAll(negative.keys())
             addAll(epochFence.fencedKeys())
@@ -894,7 +888,7 @@ internal class RealAquifer<K : Any, V : Any>(
         // exists for is typically cold — process resumed, memory shed — which is exactly when
         // every key is a memory miss and the per-key path was N sequential storage reads.
         // Iterating the copy also keeps the keys judged identical to the keys read.
-        val active = LinkedHashMap(activeKeys)
+        val active = activeKeys.snapshot()
         if (active.isEmpty()) return
         // A forced sweep judges nothing, so the batched read is only worth making on a
         // conditional store — there the refresh path looks each entry up again for its
@@ -962,31 +956,6 @@ internal class RealAquifer<K : Any, V : Any>(
     override fun close() {
         if (closed.compareAndSet(false, true)) {
             job.cancel()
-        }
-    }
-
-    // CAS loops on ConcurrentMap primitives instead of merge/computeIfPresent: those default
-    // methods only exist on Android API 24+, and aquifer-core supports API 21. ActiveBars is
-    // immutable so `replace(key, old, new)` stays a plain compare-and-set; it keeps identity
-    // equality, so a losing CAS simply retries against whatever the winner installed.
-    private fun registerActive(key: K, maxAge: Duration?) {
-        while (true) {
-            val current = activeKeys[key]
-            when {
-                current == null -> if (activeKeys.putIfAbsent(key, ActiveBars.of(maxAge)) == null) return
-                else -> if (activeKeys.replace(key, current, current.plus(maxAge))) return
-            }
-        }
-    }
-
-    private fun unregisterActive(key: K, maxAge: Duration?) {
-        while (true) {
-            val current = activeKeys[key] ?: return
-            val remaining = current.minus(maxAge)
-            when {
-                remaining == null -> if (activeKeys.remove(key, current)) return
-                else -> if (activeKeys.replace(key, current, remaining)) return
-            }
         }
     }
 
