@@ -194,18 +194,35 @@ What every consuming app touches daily; highest user-facing leverage.
 
 Make the fetch path cheap and stampede-proof under real-world conditions.
 
-- [ ] **Stop the refresh path re-reading each entry for its validator** — on any validator-aware
-  store (`conditionalFetcher` *or* `conditionalBatchFetcher`), every `refreshWith` slice calls
-  `load(key)` to obtain `prior` before invoking the transport, and feeds it to `resolve()` as what a
-  `NotModified` resolves against. That read is load-bearing, so it cannot simply be deleted — and
-  batching the sweep's fetches did nothing for it, because each slice still makes its own. A caller
-  that has *already* loaded and fenced the entry — `revalidateActive`'s sweep does exactly this —
-  pays for it twice, and on an active set wider than `memoryCache.maxEntries` the second read hits
-  persistence per key because the first only warmed memory. Fix by letting a caller hand its
-  snapshot to the refresh path instead of having it re-read. The catch, and why this is its own
-  change: the read sits inside the fetch body deliberately ("the entry as it stood when the fetch
-  started"), so moving it interacts with epoch and sequencer fencing and needs a Lincheck run of its
-  own. *(S–M)*
+- [ ] **Stop the refresh path re-reading each entry for its validator** *(deprioritised — see the
+  hazard below)* — on any validator-aware store (`conditionalFetcher` *or*
+  `conditionalBatchFetcher`), every `refreshWith` slice calls `load(key)` to obtain `prior` before
+  invoking the transport, and feeds it to `resolve()` as what a `NotModified` resolves against. A
+  caller that has *already* loaded and fenced the entry — `revalidateActive`'s sweep does exactly
+  this — pays for it twice, and on an active set wider than `memoryCache.maxEntries` the second read
+  hits persistence per key because the first only warmed memory.
+
+  **The obvious fix is unsafe, and the reason is worth writing down before someone tries it.**
+  Handing the caller's snapshot straight to `refreshWith` loses a property the current placement
+  gives for free. The read sits *after* registration, inside the lazily-started body; a snapshot
+  taken by the caller is necessarily from *before* it. In that gap an already-in-flight fetch can
+  commit — a fetch commit does **not** move the epoch — and then `beginOrJoin` finds nothing in
+  flight and starts a new one. Sequence: F1 in flight for K → the sweep's `loadAll` captures E0 →
+  F1 commits E1 → the sweep registers and wins → the transport answers `NotModified` → `resolve()`
+  commits **E0 over E1**, unfenced, because the epoch never moved. Today's per-key `load(key)`
+  cannot see that stale state: it runs after registration, so it observes E1.
+
+  A safe version therefore has to *validate* the snapshot rather than trust it — carry the
+  `commitGen` reading from when it was taken and fall back to `load(key)` if it has moved, which is
+  the same guard shape used for residual hydration. That is buildable, but it turns a "pass the
+  value you already have" change into another piece of fencing-sensitive machinery.
+
+  **Which is why this is deprioritised rather than open-and-ready.** The saving is N memory lookups
+  in the common case (entries resident, negligible) and N persistence reads only when the active set
+  exceeds `memoryCache.maxEntries` — a real case, but a narrow one, since the default cap is 512 and
+  an active set is what a user has on screen. That does not obviously justify another guarded path
+  through the fetch commit. Worth revisiting if a profile on a small-`maxEntries` store says
+  otherwise. *(S–M)*
 - [ ] **[#12](https://github.com/QuasarApps/aquifer/issues/12) — benchmark, then stripe the commit guard** *(deferred)* — a JMH-style harness for
   concurrent commit throughput against a real file store, then per-key lock striping only if the
   numbers justify it (constraints documented in the issue). Deferred for two reasons: with zero
