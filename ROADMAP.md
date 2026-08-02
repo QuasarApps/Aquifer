@@ -431,18 +431,6 @@ The engine's guarantees deserve machine-checked evidence.
   classes pin `@Config(sdk = [35])`. So the compatibility branch is exercised *only* at the API
   level where it is deprecated and never at the ones it exists for, and `minSdk = 21` is a promise
   the suite does not keep. Run the connectivity tests across a low/high SDK pair. *(S)*
-- [ ] **Key the hydration guard on a commit-only generation counter** — the guard shipped in 0.6
-  captures `sequencer.get()` before the off-lock persistence read and re-reads under `commitGuard`
-  if it moved. But hydration *itself* advances the sequencer (`load`/`loadAll` allocate a sequence
-  for the entry they install), so the guard fires on far more than "a commit raced": two concurrent
-  cold reads of *different* keys interfere: the first to take the lock sees an unchanged sequencer
-  and hydrates directly, but its own sequence allocation forces every later contender through the
-  guarded re-read, so N concurrent cold reads cost N−1 extra reads — each performed while holding
-  the commit lock, and for `loadAll` that re-read is the whole batch again
-  (`store.readAll(epochs.keys)`), which is exactly the shape of a cold start. Correctness is
-  unaffected (the re-read is authoritative); the cost is avoidable I/O in the window where the
-  commit lock is most contended. The invariant the guard actually needs is "no *commit*
-  intervened", so give commits their own counter that hydration does not advance. *(M)*
 - [ ] **Point Lincheck at the concurrency that is actually hand-rolled** — two of the shipped
   classes prove very little for their cost: `MemoryCacheLincheckTest` and
   `BoundedLruMapLincheckTest` run `maxEntries = 10` against keys `1:3`, so eviction never fires,
@@ -557,6 +545,27 @@ The engine's guarantees deserve machine-checked evidence.
   stale — that file still exists as `aquifer-core`'s internal test helper, distinct from the
   *published* `settle()`/`FakeClock` twins in `aquifer-test` (the README testing section already
   points consumers there). *(S)*
+- [x] **Key the hydration guard on a commit-only generation counter** (shipped) — the guard shipped
+  in 0.6 captured `sequencer.get()` before the off-lock persistence read and re-read under
+  `commitGuard` if it moved. But hydration *itself* advances the sequencer (`load`/`loadAll`
+  allocate a sequence for the entry they install), so the guard fired on far more than "a commit
+  raced": two concurrent cold reads of *different* keys interfered — the first to take the lock saw
+  an unchanged sequencer and hydrated directly, but its own allocation forced every later contender
+  through the guarded re-read, so N concurrent cold reads cost N−1 extra reads, each performed while
+  holding the commit lock, and for `loadAll` that re-read was the whole batch again
+  (`store.readAll(epochs.keys)`) — exactly the shape of a cold start, and of the reconnect sweep.
+
+  Fixed by giving commits their own counter, `commitGen`, that hydration does not advance, with a
+  single `commitSequence()` allocator so the six commit sites cannot drift from it and a new one
+  cannot silently miss it. Correctness was never at stake — the re-read is authoritative either way
+  — so the win is purely the avoidable I/O, taken in the window where the commit lock is most
+  contended.
+
+  Two tests pin it, and they discriminate in opposite directions: with the guard keyed back on the
+  sequencer, two concurrent cold reads of different keys record reads `[a, b, b]` instead of
+  `[a, b]`; and a racing *fetch* commit (which does not move the epoch, unlike `put`/`invalidate`,
+  and which must therefore still be caught) forces the re-read under both keyings — proving the
+  guard was made accurate rather than merely quieter. *(M)*
 
 ## 0.6 — API ergonomics & polish
 

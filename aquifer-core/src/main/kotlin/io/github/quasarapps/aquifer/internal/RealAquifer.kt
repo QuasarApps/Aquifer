@@ -136,6 +136,24 @@ internal class RealAquifer<K : Any, V : Any>(
     private val sequencer = AtomicLong()
 
     /**
+     * Counts *commits* only — [put]/[putAll], a fetch commit, and the drops
+     * ([invalidate]/[invalidateWhere]/[invalidateAll]) — and deliberately **not** persistence
+     * hydration, which allocates a [sequencer] value without changing what is authoritative.
+     *
+     * This is what the residual-hydration guard in [load]/[loadAll] watches. Keying that guard on
+     * [sequencer] conflated the two: hydration bumps the sequencer, so N concurrent cold reads of
+     * *different* keys each tripped the next one's guard and paid an extra read — under
+     * [commitGuard], and for [loadAll] an extra read of the whole batch, which is exactly the cold
+     * start where it hurts most. The invariant the guard needs is "no commit intervened", and this
+     * counter states it directly.
+     *
+     * Every increment happens under [commitGuard], so a guard that compares under the same lock
+     * sees every commit that completed before it acquired the lock, and none can land while it
+     * holds it. Allocate through [commitSequence] rather than touching this directly.
+     */
+    private val commitGen = AtomicLong()
+
+    /**
      * Counts manual memory sheds ([evictMemory]/[trimToSize]) — never LRU eviction. A new stream
      * collector snapshots this before hydrating; if it advances before the collector primes, a shed
      * raced the subscription and may have dropped a fetch commit the collector both missed on the
@@ -702,7 +720,7 @@ internal class RealAquifer<K : Any, V : Any>(
             persistence?.write(key, PersistedEntry(value, now))
             epochFence.fence(key)
             negative.remove(key)
-            entry = MemoryCache.Entry(value, now, sequencer.incrementAndGet())
+            entry = MemoryCache.Entry(value, now, commitSequence())
             memory.put(key, entry)
         }
         events.emit(Event.Updated(key, value, Origin.LOCAL, now, entry.sequence))
@@ -727,7 +745,7 @@ internal class RealAquifer<K : Any, V : Any>(
             for ((key, value) in entries) {
                 epochFence.fence(key)
                 negative.remove(key)
-                val entry = MemoryCache.Entry(value, now, sequencer.incrementAndGet())
+                val entry = MemoryCache.Entry(value, now, commitSequence())
                 memory.put(key, entry)
                 committed[key] = entry
             }
@@ -748,7 +766,7 @@ internal class RealAquifer<K : Any, V : Any>(
             epochFence.fence(key)
             negative.remove(key)
             memory.remove(key)
-            sequencer.incrementAndGet()
+            commitSequence()
         }
         events.emit(Event.Invalidated(key, sequence))
     }
@@ -793,7 +811,7 @@ internal class RealAquifer<K : Any, V : Any>(
                 epochFence.fence(key)
                 negative.remove(key)
                 memory.remove(key)
-                drops += key to sequencer.incrementAndGet()
+                drops += key to commitSequence()
             }
         }
         for ((key, sequence) in drops) {
@@ -808,7 +826,7 @@ internal class RealAquifer<K : Any, V : Any>(
             epochFence.fenceAll()
             negative.clear()
             memory.clear()
-            sequencer.incrementAndGet()
+            commitSequence()
         }
         events.emit(Event.ClearedAll(sequence))
     }
@@ -857,6 +875,18 @@ internal class RealAquifer<K : Any, V : Any>(
             Freshness.CacheFirst -> usable
             Freshness.NetworkFirst, Freshness.NetworkOnly -> false
         }
+
+    /**
+     * Allocates the next entry sequence for a **commit**, marking that a commit happened so the
+     * residual-hydration guard in [load]/[loadAll] can see it. Every authoritative write goes
+     * through here; hydration calls [sequencer] directly instead, because materialising what is
+     * already persisted is not a commit and must not trip that guard. Call only under
+     * [commitGuard].
+     */
+    private fun commitSequence(): Long {
+        commitGen.incrementAndGet()
+        return sequencer.incrementAndGet()
+    }
 
     override suspend fun revalidateActive(force: Boolean) {
         checkOpen()
@@ -1125,7 +1155,7 @@ internal class RealAquifer<K : Any, V : Any>(
      * the negative-cache record, writes persistence and memory, and broadcasts `Updated`. A
      * mutation that raced the fetch leaves the epoch moved, and the commit is dropped.
      *
-     * Persistence is written *before* the sequencer is bumped, matching every direct mutation
+     * Persistence is written *before* the commit sequence is allocated, matching every direct mutation
      * ([put]/[invalidate]/…): that upholds the invariant the hydration guard in [load]/[loadAll]
      * relies on — an observer seeing commit sequence *S* also sees disk at *S*. Bumping first would
      * open a window (sequencer already *S*, disk still stale) in which an [evictMemory] dropping the
@@ -1141,7 +1171,7 @@ internal class RealAquifer<K : Any, V : Any>(
                 val entry = MemoryCache.Entry(
                     resolved.value,
                     now,
-                    sequencer.incrementAndGet(),
+                    commitSequence(),
                     resolved.validator,
                     resolved.serverFreshForMillis,
                 )
@@ -1191,12 +1221,14 @@ internal class RealAquifer<K : Any, V : Any>(
      * Hydration is epoch-fenced exactly like fetch commits: a storage read suspended across
      * an [invalidate]/[invalidateAll] must not put the deleted entry back into memory; the
      * fenced case reports a miss (those mutations move the epoch). A racing *fetch commit* does
-     * **not** move the epoch, so a second guard covers it: if the [sequencer] advanced during the
+     * **not** move the epoch, so a second guard covers it: if [commitGen] advanced during the
      * off-lock read, a commit raced and its value may already have been evicted from the memory
      * re-check, so the authoritative persisted state is re-read under [commitGuard] rather than
      * trusting the (possibly stale) pre-lock snapshot — closing the residual hydration race that
      * would otherwise let a stale disk snapshot overwrite a fresher-but-evicted commit. The hot
-     * memory path never takes [commitGuard], and with no racing write no extra read is done.
+     * memory path never takes [commitGuard], and with no racing *commit* no extra read is done —
+     * [commitGen], unlike [sequencer], is not advanced by hydration, so concurrent cold reads of
+     * different keys no longer trip each other's guard.
      */
     private suspend fun load(key: K): Snapshot<V>? {
         memory.get(key)?.let { return Snapshot(it, Origin.MEMORY) }
@@ -1204,10 +1236,11 @@ internal class RealAquifer<K : Any, V : Any>(
         val epoch = epochFence.capture(key)
         // Captured with the epoch, before the off-lock read: a fetch commit can race the read
         // *without* moving the epoch (only invalidate/put fence), so the epoch alone cannot tell a
-        // stale pre-lock snapshot from one a racing commit has since superseded. The sequencer
-        // advances on every commit under commitGuard, so a change between here and the lock means a
-        // write raced — see the hydrate branch.
-        val writeGen = sequencer.get()
+        // stale pre-lock snapshot from one a racing commit has since superseded. commitGen
+        // advances on every commit under commitGuard — and on nothing else — so a change between
+        // here and the lock means a commit raced, and hydration alone never says so. See the
+        // hydrate branch.
+        val writeGen = commitGen.get()
         val preLockRead = store.read(key) ?: return null
         return commitGuard.withLock {
             val existing = memory.get(key)
@@ -1215,13 +1248,13 @@ internal class RealAquifer<K : Any, V : Any>(
                 existing != null -> Snapshot(existing, Origin.MEMORY)
 
                 epochFence.isCurrent(key, epoch) -> {
-                    // Residual-hydration guard: if a commit raced the off-lock read (sequencer
+                    // Residual-hydration guard: if a commit raced the off-lock read (commitGen
                     // moved), the pre-lock snapshot may be staler than a value that was committed to
                     // memory and disk and then evicted before this memory re-check — so re-read the
                     // authoritative persisted state under the lock (no commit can be in flight while
                     // it is held). With no racing write the pre-lock read stands, so the common
                     // cold-read path takes no extra I/O.
-                    val source = if (sequencer.get() != writeGen) store.read(key) else preLockRead
+                    val source = if (commitGen.get() != writeGen) store.read(key) else preLockRead
                     source?.let {
                         val entry =
                             MemoryCache.Entry(
@@ -1246,7 +1279,7 @@ internal class RealAquifer<K : Any, V : Any>(
      * [runBatch]): memory hits resolve without I/O, and every memory miss is read from the source
      * of truth in a single [SourceOfTruth.readAll] call instead of N. Each miss is fenced exactly
      * as [load] — its epoch is captured before the batched read and re-checked under [commitGuard]
-     * with a memory re-read, and the same [sequencer]-based residual-hydration guard re-reads the
+     * with a memory re-read, and the same [commitGen]-based residual-hydration guard re-reads the
      * batch under the lock if a commit raced it — so a put/invalidate racing the read neither
      * resurrects a deleted entry nor overwrites a fresher commit (even one since evicted). Keys with
      * nothing cached are absent from the result.
@@ -1270,16 +1303,18 @@ internal class RealAquifer<K : Any, V : Any>(
             }
         }
         if (epochs.isEmpty()) return result
-        // See load(): the sequencer pins whether a commit raced the off-lock batch read.
-        val writeGen = sequencer.get()
+        // See load(): commitGen pins whether a *commit* raced the off-lock batch read. Keying
+        // this on the sequencer instead made every concurrent cold read after the first re-read
+        // the entire batch under the lock, purely because the first one's hydration bumped it.
+        val writeGen = commitGen.get()
         val preLockRead = store.readAll(epochs.keys)
         if (preLockRead.isEmpty()) return result
         commitGuard.withLock {
-            // Residual-hydration guard (see load()): on any write racing the off-lock batch read
-            // (sequencer moved) re-read the authoritative persisted state under the lock, so a
+            // Residual-hydration guard (see load()): on a commit racing the off-lock batch read
+            // (commitGen moved) re-read the authoritative persisted state under the lock, so a
             // committed-then-evicted value is never overwritten by a stale pre-lock snapshot; with
             // no racing write the pre-lock batch stands.
-            val persisted = if (sequencer.get() != writeGen) store.readAll(epochs.keys) else preLockRead
+            val persisted = if (commitGen.get() != writeGen) store.readAll(epochs.keys) else preLockRead
             for ((key, entry) in persisted) {
                 val epoch = epochs[key] ?: continue // a store returning an unrequested key: ignore it
                 val existing = memory.get(key)
