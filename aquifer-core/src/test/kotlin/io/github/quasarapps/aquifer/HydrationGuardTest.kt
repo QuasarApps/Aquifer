@@ -19,12 +19,21 @@ class HydrationGuardTest {
         private val entries: Map<String, PersistedEntry<Int>>,
     ) : SourceOfTruth<String, Int> {
         val reads = mutableListOf<String>()
+        val batchReads = mutableListOf<Set<String>>()
         var gate: CompletableDeferred<Unit>? = null
 
         override suspend fun read(key: String): PersistedEntry<Int>? {
             reads += key
             gate?.await()
             return entries[key]
+        }
+
+        // Overridden rather than left to the per-key default, so the batched guard's re-read shows
+        // up as one recorded batch instead of being hidden inside a loop over read().
+        override suspend fun readAll(keys: Collection<String>): Map<String, PersistedEntry<Int>> {
+            batchReads += keys.toSet()
+            gate?.await()
+            return keys.mapNotNull { key -> entries[key]?.let { key to it } }.toMap()
         }
 
         override suspend fun write(key: String, entry: PersistedEntry<Int>) = Unit
@@ -60,6 +69,46 @@ class HydrationGuardTest {
         // second contender through a guarded re-read of its own key — N concurrent cold reads cost
         // N-1 extra reads, each taken while holding the commit lock.
         assertEquals(listOf("a", "b"), disk.reads)
+    }
+
+    @Test
+    fun `concurrent cold getAll batches do not re-read each other's batches`() = runTest {
+        val disk = GatedDisk(
+            mapOf(
+                "a" to PersistedEntry(1, 0),
+                "b" to PersistedEntry(2, 0),
+                "c" to PersistedEntry(3, 0),
+                "d" to PersistedEntry(4, 0),
+            ),
+        )
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(FakeClock())
+            fetcher { error("nothing should reach the network; every key is on disk") }
+            persistence(disk)
+        }
+
+        // `loadAll` has its own copy of the guard, so the single-key test above cannot cover it —
+        // and the repeated read here is the *whole batch*, which is the expensive case.
+        val gate = CompletableDeferred<Unit>()
+        disk.gate = gate
+        val batches = listOf(
+            async { store.getAll(setOf("a", "b")) },
+            async { store.getAll(setOf("c", "d")) },
+        )
+        settle()
+        assertEquals(listOf(setOf("a", "b"), setOf("c", "d")), disk.batchReads)
+
+        disk.gate = null
+        gate.complete(Unit)
+        assertEquals(
+            listOf(mapOf("a" to 1, "b" to 2), mapOf("c" to 3, "d" to 4)),
+            batches.awaitAll(),
+        )
+
+        // One batch read each. Keyed on the sequencer, the first batch's hydration advanced it and
+        // the second contender re-read its entire batch under the commit lock.
+        assertEquals(listOf(setOf("a", "b"), setOf("c", "d")), disk.batchReads)
     }
 
     @Test
