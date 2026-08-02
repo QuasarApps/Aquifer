@@ -23,6 +23,14 @@ internal class ActiveBars private constructor(private val counts: Map<Duration?,
     /** The distinct bars in play, for a caller that needs to test staleness against each. */
     val bars: Set<Duration?> get() = counts.keys
 
+    /**
+     * How many collectors hold [maxAge], or `0` for a bar nobody holds — the multiplicity [bars]
+     * discards. The sweep only needs the distinct bars, so this exists for checks that must see the
+     * whole multiset: a lost registration of an already-held bar changes the count and nothing
+     * else, so a projection built on [bars] alone cannot observe it.
+     */
+    fun count(maxAge: Duration?): Int = counts[maxAge] ?: 0
+
     /** A copy with one more collector holding [maxAge]. */
     fun plus(maxAge: Duration?): ActiveBars =
         ActiveBars(counts + (maxAge to (counts[maxAge] ?: 0) + 1))

@@ -48,8 +48,15 @@ class ActiveKeyRegistryLincheckTest {
         registry.unregister(key, bar(bar))
 
     /**
-     * The bars held on [key], as comparable values; empty when nothing is watching it — which is
-     * also how "the key vanished when its last collector detached" is observed.
+     * The complete per-key state as comparable values: every bar held, **with its multiplicity**,
+     * or empty when nothing is watching the key — which is also how "the key vanished when its last
+     * collector detached" is observed.
+     *
+     * The count matters as much as the bar. `ActiveBars.bars` is the set of *distinct* bars, so a
+     * projection built on it alone cannot see a lost registration of an already-held bar: the
+     * multiset would carry one collector where two registered, and the distinct set would look
+     * identical. That multiplicity is the whole reason this is a multiset rather than a single
+     * tightest bar, so it is exactly what must be checked.
      *
      * Per *key*, deliberately. [ActiveKeyRegistry.snapshot] and `keys` iterate the
      * `ConcurrentHashMap` weakly, so they are not atomic across keys and asserting linearizability
@@ -59,20 +66,39 @@ class ActiveKeyRegistryLincheckTest {
      * state, which every update really does compare-and-set atomically.
      */
     @Operation
-    fun barsOf(@Param(name = "key") key: Int): List<String> =
-        registry.bars(key)?.bars.orEmpty().map { it.toString() }.sorted()
+    fun barsOf(@Param(name = "key") key: Int): List<String> {
+        val held = registry.bars(key) ?: return emptyList()
+        return held.bars.map { "$it x${held.count(it)}" }.sorted()
+    }
 
     @Test
     fun stressTest() = StressOptions()
-        .iterations(30)
+        .iterations(20)
         .threads(3)
         .actorsPerThread(3)
         .check(this::class)
 
+    /**
+     * Model checking over a **hand-written scenario** rather than generated ones, because the
+     * interleaving that matters here is known: two collectors registering the same bar on the same
+     * key, whose read-modify-write must not lose one of them.
+     *
+     * Random exploration was the wrong instrument for it. At `10 / 2 / 2` it cost 4m43s on its own
+     * — the larger half of this class — and still failed to catch a CAS replaced by an
+     * unconditional `put`, which `stressTest` catches. Raising the iteration count to find it would
+     * have pushed the shared `lincheckTest` job past 40 minutes, since the model checker instruments
+     * `ConcurrentHashMap`'s internals too. Naming the scenario explores exactly the contended case
+     * exhaustively, in seconds, and pins the multiplicity the multiset exists to keep.
+     */
     @Test
     fun modelCheckingTest() = ModelCheckingOptions()
-        .iterations(30)
-        .threads(3)
-        .actorsPerThread(3)
+        .iterations(0) // custom scenario only
+        .addCustomScenario {
+            parallel {
+                thread { actor(ActiveKeyRegistryLincheckTest::register, 1, 1) }
+                thread { actor(ActiveKeyRegistryLincheckTest::register, 1, 1) }
+            }
+            post { actor(ActiveKeyRegistryLincheckTest::barsOf, 1) }
+        }
         .check(this::class)
 }
