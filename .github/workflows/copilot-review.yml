@@ -7,15 +7,16 @@
 # resolves `pull_request_target` workflows from the default branch — not from
 # the PR's base branch, and not from its head. Verified: a run fired on a PR
 # whose base and head both lacked this file, with only the default branch
-# carrying it. So one copy on `develop` covers every PR here whatever it
-# targets, and copies on release branches are dead weight.
+# carrying it. So that one copy covers every PR in the repo whatever it
+# targets, and a copy on any other branch is inert.
 #
 # `pull_request_target`, not `pull_request`: under `pull_request` the
 # definition comes from the PR head, so anyone with push access could edit
 # this file on a branch, open a PR, and exfiltrate COPILOT_REVIEW_PAT — a
-# token belonging to an org owner. Default-branch resolution is what closes
-# that path. It is only safe on top of the called workflow never checking out
-# or executing PR code. Do not add steps here that do.
+# fine-grained token that can write to pull requests across the org's
+# repositories. Default-branch resolution is what closes that path. It is
+# only safe on top of the called workflow never checking out or executing PR
+# code. Do not add steps here that do.
 #
 # Not triggered on `synchronize`: a review is metered against the requesting
 # account (AI credits, plus Actions minutes for this job), so re-reviews after
