@@ -3,19 +3,23 @@
 # so a fix lands once rather than in every repo; this file only supplies the
 # trigger and the secret.
 #
-# `pull_request_target`, not `pull_request`: the former runs the workflow
-# definition from the BASE branch. Under `pull_request` the definition comes
-# from the PR head, so anyone with push access could edit this file on a
-# branch, open a PR, and exfiltrate COPILOT_REVIEW_PAT — a token belonging to
-# an org owner. That trigger is only safe because the called workflow never
-# checks out or executes PR code. Do not add steps here that do.
+# Only the copy on this repository's DEFAULT branch does anything. GitHub
+# resolves `pull_request_target` workflows from the default branch — not from
+# the PR's base branch, and not from its head. Verified: a run fired on a PR
+# whose base and head both lacked this file, with only the default branch
+# carrying it. So one copy on `develop` covers every PR here whatever it
+# targets, and copies on release branches are dead weight.
 #
-# Not triggered on `synchronize`: each Copilot review costs 13 premium
-# requests, so re-reviews after new pushes stay a judgement call. Close and
-# reopen a PR to re-request.
+# `pull_request_target`, not `pull_request`: under `pull_request` the
+# definition comes from the PR head, so anyone with push access could edit
+# this file on a branch, open a PR, and exfiltrate COPILOT_REVIEW_PAT — a
+# token belonging to an org owner. Default-branch resolution is what closes
+# that path. It is only safe on top of the called workflow never checking out
+# or executing PR code. Do not add steps here that do.
 #
-# Runs attach to the base commit, so they do not appear in the PR's own checks
-# list — confirm via the Actions tab, not the PR.
+# Not triggered on `synchronize`: a review is metered against the requesting
+# account (AI credits, plus Actions minutes for this job), so re-reviews after
+# new pushes stay a judgement call. Close and reopen a PR to re-request.
 name: Request Copilot review
 
 on:
