@@ -15,12 +15,14 @@
 # this file on a branch, open a PR, and exfiltrate COPILOT_REVIEW_PAT — a
 # fine-grained token that can write to pull requests across the org's
 # repositories. Default-branch resolution is what closes that path. It is
-# only safe on top of the called workflow never checking out or executing PR
-# code. Do not add steps here that do.
+# only safe because the called workflow never checks out or executes PR code.
+# Do not add steps here that do.
 #
-# Not triggered on `synchronize`: a review is metered against the requesting
-# account (AI credits, plus Actions minutes for this job), so re-reviews after
-# new pushes stay a judgement call. Close and reopen a PR to re-request.
+# Not triggered on `synchronize`: each review spends AI credits belonging to
+# the account that requested it, and on a private repo this job also draws
+# Actions minutes from the repository owner's entitlement (a public repo
+# spends none). So re-reviews after new pushes stay a judgement call — close
+# and reopen a PR to re-request.
 name: Request Copilot review
 
 on:
