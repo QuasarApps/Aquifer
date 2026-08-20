@@ -6,7 +6,7 @@ kotlinx-serialization = "1.11.0"
 # stay on the 5.x line (Dependabot is configured to skip junit-bom majors accordingly).
 junit = "5.14.4"
 turbine = "1.2.1"
-okhttp = "5.4.0"
+okhttp = "5.5.0"
 agp = "8.13.0"
 androidx-lifecycle = "2.9.1"
 androidx-test-core = "1.6.1"
