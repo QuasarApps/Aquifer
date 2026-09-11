@@ -6,7 +6,7 @@ kotlinx-serialization = "1.11.0"
 # stay on the 5.x line (Dependabot is configured to skip junit-bom majors accordingly).
 junit = "5.14.4"
 turbine = "1.2.1"
-okhttp = "5.4.0"
+okhttp = "5.5.0"
 agp = "8.13.0"
 androidx-lifecycle = "2.9.1"
 androidx-test-core = "1.6.1"
@@ -50,7 +50,7 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 android-library = { id = "com.android.library", version.ref = "agp" }
-binary-compatibility-validator = { id = "org.jetbrains.kotlinx.binary-compatibility-validator", version = "0.18.1" }
+binary-compatibility-validator = { id = "org.jetbrains.kotlinx.binary-compatibility-validator", version = "0.18.2" }
 detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
 dokka = { id = "org.jetbrains.dokka", version = "2.2.0" }
 maven-publish = { id = "com.vanniktech.maven.publish", version = "0.37.0" }
