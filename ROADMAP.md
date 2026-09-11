@@ -304,17 +304,22 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   collector on a busy store. `DataState` is a snapshot, not a log: a collector only ever needs the
   newest state of its key, and the watermark logic already rejects anything older than what it has
   applied. So the buffer can be *conflated* — keep the latest `Updated`/drop and the latest
-  transition for the collector's key — instead of replaying history. The trade to write down: a
-  collector that stalls through a `Fetching` → `Updated` pair sees only the `Updated`, which is
-  what a UI wants and what `distinctUntilChanged` would have collapsed anyway. What is **not** an
-  option is a plain capacity cap with drop-oldest: each collector buffers the *store-wide* bus and
-  filters by key afterwards, so under a cap unrelated keys' traffic can push out the one event the
-  collector needed and leave it stale for good. Keyed conflation, or drop-with-resync (an overflow
-  marks the tracker dirty, and on resume it re-reads memory for its key under the same watermark
-  rule a new subscriber uses), are the only sound shapes. `BackpressureTest` today proves the
-  *writers'* side — a stalled collector blocks neither `put` nor other callers — and says nothing
-  about what the stalled collector eventually sees; the change needs the missing half: release the
-  collector and assert it lands on the final state. *(M)*
+  transition for the collector's key — instead of replaying history. The trade to write down,
+  because it is a behaviour change and not something the stream already does: a collector that
+  stalls through a `Fetching` → `Updated` pair sees only the `Updated`. Today it sees both —
+  `distinctUntilChanged` compares `Loading` and `Content`, which are different types and never
+  equal — so conflation deliberately drops an observable loading state on a stalled collector.
+  That is the right call for a UI that was not rendering while it stalled and lands on the final
+  state regardless, but it is the contract to state, not an existing behaviour to point at. What
+  is **not** an option is a plain capacity cap with drop-oldest: each collector buffers the
+  *store-wide* bus and filters by key afterwards, so under a cap unrelated keys' traffic can push
+  out the one event the collector needed and leave it stale for good. Keyed conflation, or
+  drop-with-resync (an overflow marks the tracker dirty, and on resume it re-reads memory for its
+  key under the same watermark rule a new subscriber uses), are the only sound shapes.
+  `BackpressureTest` today proves the *writers'* side — a stalled collector blocks neither `put`
+  nor other callers — and says nothing about what the stalled collector eventually sees; the
+  change needs the missing half: release the collector and assert it lands on the final
+  state. *(M)*
 - [ ] **Stop the refresh path re-reading each entry for its validator** *(deprioritised — see the
   hazard below)* — on any validator-aware store (`conditionalFetcher` *or*
   `conditionalBatchFetcher`), every `refreshWith` slice calls `load(key)` to obtain `prior` before
@@ -523,10 +528,13 @@ N-round-trip behavior or force a contract break mid-milestone.
 - [ ] **Adapter parity — or a written reason for the gap** — the file store has
   `maxEntries`/`maxBytes`, `cipher`, and `schemaVersion`/`migrate`; the SQLDelight store has none of
   the three, so the README's bounded-disk, encryption-at-rest and migration sections silently
-  apply to one adapter. Each gap has a different right answer. *Bounding* is easier in SQL (an
-  access-time column and `DELETE … ORDER BY accessedAt LIMIT …`) but the table has no such column
-  and `readAll` records no recency — a schema change, which is the next item's concern. *Value
-  migration* is cheap parity: the value is JSON text, so the same envelope trick applies.
+  apply to one adapter. Each gap has a different right answer. *Bounding* is easier in SQL — an
+  access-time column and `DELETE FROM entry WHERE key IN (SELECT key FROM entry ORDER BY
+  accessedAt LIMIT …)`, the subquery form rather than `DELETE … ORDER BY … LIMIT`, which only
+  compiles on a SQLite built with `SQLITE_ENABLE_UPDATE_DELETE_LIMIT` and a consumer-supplied
+  driver does not guarantee that — but the table has no such column and `readAll` records no
+  recency, so it is a schema change, which is the next item's concern. *Value migration* is
+  cheap parity: the value is JSON text, so the same envelope trick applies.
   *Encryption* is a genuine decision: SQLCipher encrypts the whole database, keys included, which a
   `ValueCipher` on the value column would leave in plaintext — so parity may be the wrong answer
   and "use a SQLCipher driver" the right one, but then the KDoc and README must say so wherever
