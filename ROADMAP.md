@@ -165,10 +165,13 @@ What every consuming app touches daily; highest user-facing leverage.
   at least one frame of skeleton over data the store already has — the flash the library exists to
   prevent, reintroduced at the last step. The engine already has the primitive: `memory.get` is a
   non-suspending monitor read, the same class of operation `snapshot()`/`stats()` expose. A
-  `peek(key): DataState.Content<V>?` — memory only, no I/O, no fencing, safe on a closed store, with
-  `isStale` judged as `stream` would judge it — lets `collectAsState`/`collectAsStateMany` seed
-  their `initialValue` from it; the bus subscription that follows still catches anything newer,
-  exactly as `prime()` does today. It is a new interface member, so it lands on the
+  `peek(key, maxAge: Duration? = null): DataState.Content<V>?` — memory only, no I/O, no fencing,
+  safe on a closed store — lets `collectAsState`/`collectAsStateMany` seed their `initialValue`
+  from it. It takes the same `maxAge` as `stream` and judges `isStale` by the same precedence
+  (per-call `maxAge`, else the entry's server horizon, else the jittered store TTL), so the seeded
+  frame and the stream's first emission agree — `collectAsState` forwards the `maxAge` it already
+  holds. The bus subscription that follows still catches anything newer, exactly as `prime()` does
+  today. It is a new interface member, so it lands on the
   implementation-stance decision in the 1.0 docket; `previewAquifer` and `fakeAquifer` get trivial
   bodies. *(S–M)*
 - [ ] **Preview states, not just values** — `previewAquifer` seeds *values*: a stream emits
@@ -176,8 +179,10 @@ What every consuming app touches daily; highest user-facing leverage.
   — the loading skeleton and the failure banner — cannot be previewed at all, and neither can the
   stale badge (`isStale` is always `false`). Let the seed carry a `DataState` per key
   (`previewAquifer { content("u1", ada); loading("u2", cached = grace); failure("u3", error) }`, or a
-  `Map<K, DataState<V>>` overload), with `get`/`getAll` deriving from it (`Loading`/`Empty` → miss,
-  `Failure` → throw). Pure addition; the existing `vararg Pair<K, V>` entry point keeps its
+  `Map<K, DataState<V>>` overload), with `get`/`getAll` deriving from it the way the real store's
+  stale fallback does: a state that carries a value returns it (`Loading(cached)` and
+  `Failure(error, cached)` included), a valueless `Loading` or `Empty` is a miss, and a valueless
+  `Failure` throws its error. Pure addition; the existing `vararg Pair<K, V>` entry point keeps its
   meaning. *(S)*
 - [ ] **A recipes page** — the README explains each knob once; the questions that arrive after a
   release are combinations: a singleton (`Aquifer<Unit, Config>`); "404 is a value" (`V : Any`, so
@@ -248,12 +253,17 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   `CacheMissException`, a fetch that fails without fallback) and let the origin declare it too:
   RFC 5861's `stale-while-revalidate=N` and `stale-if-error=N` are precisely Aquifer's two stale
   behaviours, named by the standard the library is named after, and `okHttpConditionalFetcher`
-  currently ignores both (`respectCacheControl` would parse them). The catch is storage shape: a
-  `staleFor` next to `freshFor` means a new field on `FetchResult.Fresh` and `PersistedEntry`, both
-  locked `data class`es whose constructors, `copy` and `componentN` all change — binary-breaking
-  after 1.0, defaulted and free before it (the on-disk envelope takes it the way it took
-  `serverFreshForMillis`). Precedence mirrors freshness: per-call > server > builder. Ship the
-  engine seam and the parser separately, as #50/#51 did. *(M)*
+  currently ignores both (`respectCacheControl` would parse them). They are **independent**
+  horizons — an origin can send `stale-while-revalidate=30, stale-if-error=86400` — so the entry
+  carries two (`staleWhileRevalidateFor`, `staleIfErrorFor`), not one collapsed `staleFor`, and
+  each stale behaviour consults its own. The builder's `maxStale` is the app's ceiling on both:
+  a ceiling composes by `min` with whatever the server declared, not by the precedence the
+  freshness horizon uses, since "serve stale no longer than this" is a promise the app makes
+  regardless of the origin's generosity. The catch is storage shape: two fields next to `freshFor`
+  on `FetchResult.Fresh` and `PersistedEntry`, both locked `data class`es whose constructors,
+  `copy` and `componentN` all change — binary-breaking after 1.0, defaulted and free before it (the
+  on-disk envelope takes them the way it took `serverFreshForMillis`). Ship the engine seam and the
+  parser separately, as #50/#51 did. *(M)*
 - [ ] **Honour `Retry-After`** — `HttpException(code, url)` keeps the status and drops the headers,
   and `retry { }` backs off on a fixed exponential schedule, so a `429` or `503` carrying
   `Retry-After: 30` is retried after at most 250 ms, then 500 ms, straight into the same wall — the
@@ -293,12 +303,18 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   README sells the isolation and the KDoc names the cost, which is unbounded memory per stalled
   collector on a busy store. `DataState` is a snapshot, not a log: a collector only ever needs the
   newest state of its key, and the watermark logic already rejects anything older than what it has
-  applied. So the buffer can be *conflated* per key — keep the latest `Updated`/drop and the latest
-  transition — instead of replaying history. The trade to write down: a collector that stalls
-  through a `Fetching` → `Updated` pair sees only the `Updated`, which is what a UI wants and what
-  `distinctUntilChanged` would have collapsed anyway, but `BackpressureTest`'s "every event
-  arrives" assertions become "the final state arrives". A plain cap with drop-oldest is the fallback
-  if per-key conflation complicates the tracker. *(M)*
+  applied. So the buffer can be *conflated* — keep the latest `Updated`/drop and the latest
+  transition for the collector's key — instead of replaying history. The trade to write down: a
+  collector that stalls through a `Fetching` → `Updated` pair sees only the `Updated`, which is
+  what a UI wants and what `distinctUntilChanged` would have collapsed anyway. What is **not** an
+  option is a plain capacity cap with drop-oldest: each collector buffers the *store-wide* bus and
+  filters by key afterwards, so under a cap unrelated keys' traffic can push out the one event the
+  collector needed and leave it stale for good. Keyed conflation, or drop-with-resync (an overflow
+  marks the tracker dirty, and on resume it re-reads memory for its key under the same watermark
+  rule a new subscriber uses), are the only sound shapes. `BackpressureTest` today proves the
+  *writers'* side — a stalled collector blocks neither `put` nor other callers — and says nothing
+  about what the stalled collector eventually sees; the change needs the missing half: release the
+  collector and assert it lands on the final state. *(M)*
 - [ ] **Stop the refresh path re-reading each entry for its validator** *(deprioritised — see the
   hazard below)* — on any validator-aware store (`conditionalFetcher` *or*
   `conditionalBatchFetcher`), every `refreshWith` slice calls `load(key)` to obtain `prior` before
@@ -533,13 +549,20 @@ N-round-trip behavior or force a contract break mid-milestone.
   pressure. On disk nothing does: an unbounded file store keeps every key ever fetched, and a key
   space of search queries or paginated ids grows a directory forever — the file store's
   `maxEntries`/`maxBytes` are the mitigation, not a fix, and the SQLDelight store has neither. The
-  memory half is trivial: a `purgeExpired()` sweep under the memory monitor, silent and unfenced
-  like `trimToSize`. The disk half is the design: the TTL lives in the engine and the store cannot
-  see it, so either the engine enumerates (`keysWhere` + `readAll` + `deleteMany` — enumerable
-  stores only, and a full-table read) or the SPI gains a `deleteWrittenBefore(millis)` that a SQL
-  store answers in one statement and the file store answers with `null`, meaning unsupported, like
-  `keys()`. Either way it is an `Aquifer` member, so it queues on the interface-stance decision in
-  the 1.0 docket. *(S–M)*
+  first design decision is what "expired" means here, because it cannot mean *stale*: a stale
+  entry is still a valid `StaleWhileRevalidate` and stale-if-error fallback, staleness varies per
+  entry (a server `freshFor`) and per caller (a `maxAge`), and the second-horizon item in 0.3 adds
+  more per-entry horizons. Purging on any of them deletes data another strategy or caller could
+  still serve. So define purge against an explicit **retention** — `freshness { retention }`, an
+  absolute age from `writtenAtMillis` that no horizon can extend (the app promises "nothing older
+  than this is kept", and sets it at or above every stale ceiling it wants honoured). On that
+  definition the memory half is trivial: a sweep under the memory monitor, silent and unfenced like
+  `trimToSize`. The disk half is the mechanism: the cutoff is a single timestamp, so either the
+  engine enumerates (`keysWhere` + `readAll` + `deleteMany` — enumerable stores only, and a
+  full-table read) or the SPI gains a `deleteWrittenBefore(millis)` that a SQL store answers in one
+  statement and the file store answers with `null`, meaning unsupported, like `keys()` — sound
+  precisely because retention is defined on the write time alone. Either way it is an `Aquifer`
+  member, so it queues on the interface-stance decision in the 1.0 docket. *(S–M)*
 - [ ] **A Windows leg for the file store** — "JVM services" is a stated target and every CI job is
   `ubuntu-latest`. `moveIntoPlace` falls back to a plain replace only on
   `AtomicMoveNotSupportedException`; on Windows an atomic replace of a file that a concurrent
@@ -934,7 +957,8 @@ the existing fencing and single-flight guarantees.
     already carry. Decide it first.
   - **The locked data classes.** `FetchResult.Fresh`, `PersistedEntry` and `CacheStats` are
     `data class`es: a new field changes the constructor, `copy` and `componentN` at once, which BCV
-    rightly reports as a break. Two items above want one (`staleFor` in 0.3, the counters in 0.5).
+    rightly reports as a break. Two items above want new fields (the two stale horizons in 0.3,
+    the counters in 0.5).
     Either land them before the freeze, or decide now that these types stop being `data class`es (a
     plain class with a builder, or explicit `copy`) so 1.x can grow them. `HttpException` is exempt
     — a class can gain a defaulted secondary constructor — which is how `retryAfter` is planned.
