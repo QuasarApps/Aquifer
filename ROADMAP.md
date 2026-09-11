@@ -27,8 +27,8 @@ with a default. Every API decision so far — including the ones about to be fro
 made against imagined users, which makes the freeze docket below guesswork until real ones exist.
 Shipping 0.1.0 is the highest-leverage remaining action on this file, and the engineering is done:
 the version gate, the changelog collapse, the `settle()` correction and the GitHub Release step have
-all landed. What remains is owner action — the four signing secrets and the version bump off
-`-SNAPSHOT`.
+all landed. What remains is the changelog re-fold below, then owner action — the four signing secrets
+and the version bump off `-SNAPSHOT`.
 
 - [ ] **Publish v0.1.0 to Maven Central** — add the four secrets from
   [CONTRIBUTING](CONTRIBUTING.md), bump the (newly single) `version` in `gradle.properties` off
@@ -36,9 +36,24 @@ all landed. What remains is owner action — the four signing secrets and the ve
   `develop`, push `v0.1.0`. The workflow verifies and *stages* the deployment; publication is a
   deliberate click in the Central Portal, after which the **Cut a GitHub Release** workflow
   announces it. Full walkthrough in [CONTRIBUTING](CONTRIBUTING.md). *(owner action — S)*
+- [ ] **Re-fold `[Unreleased]` into `0.1.0` before tagging** — the collapse below shipped, and
+  since then `[Unreleased]` has re-accumulated above the dated section: the `revalidateActive(force)`
+  parameter (a signature change on the interface), the batched and `maxAge`-aware reconnect sweep,
+  the commit-only hydration guard, the widened sample, the Store5 guide and the staged-release
+  workflow. `changelog-section.sh` extracts the `## [0.1.0]` section *only*, so tagging now would
+  publish artifacts containing all of that and announce notes that mention none of it — and
+  CONTRIBUTING's step 1, "add a dated section", reads as already done, which is exactly how the trap
+  gets sprung. Fold them in, re-date the heading, and leave `[Unreleased]` empty at the tag; the
+  version gate cannot catch this, because the section exists. *(S)*
 - [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
   published coordinates from a clean project, and confirm the snippet still lists all seven
   published modules. *(S)*
+- [ ] **Publish an `aquifer-bom`** — seven artifacts move in lockstep and, per the CHANGELOG header,
+  pre-1.0 minors may break binary compatibility, so `aquifer-core` 0.2.0 next to `aquifer-compose`
+  0.1.0 fails at link time rather than at compile time. A Maven BOM — a `java-platform` module
+  published through the same plugin, so it joins the `publishingModules` gate automatically — makes
+  lockstep the default and turns the install snippet into one version line. Cheapest right after
+  the first release, while the coordinates are still being written down. *(S)*
 - [x] **"Coming from Store5" migration guide** (shipped) — `docs/coming-from-store5.md`, linked from
   the README's comparison section. Written against Store5's current documentation rather than from
   memory, which turned up two things the planned mapping had wrong. First, this file's own shorthand
@@ -144,6 +159,36 @@ all landed. What remains is owner action — the four signing secrets and the ve
 
 What every consuming app touches daily; highest user-facing leverage.
 
+- [ ] **`peek(key)` and a flash-free first frame in Compose** — `collectAsState` starts at
+  `Loading(null)` and holds it until the stream's first emission, which needs a dispatch and a
+  `load()` even when the entry is sitting in memory. So every navigation *back* to a screen renders
+  at least one frame of skeleton over data the store already has — the flash the library exists to
+  prevent, reintroduced at the last step. The engine already has the primitive: `memory.get` is a
+  non-suspending monitor read, the same class of operation `snapshot()`/`stats()` expose. A
+  `peek(key): DataState.Content<V>?` — memory only, no I/O, no fencing, safe on a closed store, with
+  `isStale` judged as `stream` would judge it — lets `collectAsState`/`collectAsStateMany` seed
+  their `initialValue` from it; the bus subscription that follows still catches anything newer,
+  exactly as `prime()` does today. It is a new interface member, so it lands on the
+  implementation-stance decision in the 1.0 docket; `previewAquifer` and `fakeAquifer` get trivial
+  bodies. *(S–M)*
+- [ ] **Preview states, not just values** — `previewAquifer` seeds *values*: a stream emits
+  `Content(value, MEMORY)` or `Empty`, nothing else. The two layouts a `@Preview` most needs to show
+  — the loading skeleton and the failure banner — cannot be previewed at all, and neither can the
+  stale badge (`isStale` is always `false`). Let the seed carry a `DataState` per key
+  (`previewAquifer { content("u1", ada); loading("u2", cached = grace); failure("u3", error) }`, or a
+  `Map<K, DataState<V>>` overload), with `get`/`getAll` deriving from it (`Loading`/`Empty` → miss,
+  `Failure` → throw). Pure addition; the existing `vararg Pair<K, V>` entry point keeps its
+  meaning. *(S)*
+- [ ] **A recipes page** — the README explains each knob once; the questions that arrive after a
+  release are combinations: a singleton (`Aquifer<Unit, Config>`); "404 is a value" (`V : Any`, so
+  absence has to be modelled *in* `V` — to the store a 404 is a *failure*, which the negative cache
+  remembers as one and every fetch-capable stream renders as `Failure`, never as `Empty`);
+  search/autocomplete (key = query, `coalesceWindow`, `negativeCache { maxEntries }`, and why
+  `keyEpochs` grows — #13); tenant scoping and logout
+  (`invalidateWhere` reaches disk only on an enumerable store, so the file store needs
+  `invalidateAll`); data-class keys and `keyEncoder` stability across refactors; blocking fetchers
+  and `Dispatchers.IO`. One `docs/recipes.md`, each recipe a compilable snippet, linked from the
+  README's core-concepts section. *(S)*
 - [x] **Widen the CLI sample past its first five scenarios** — the original five (cold start, SWR,
   `put`, "process death", reconnect-with-retry) are now scenarios 1-5 of a `coreLoopTour`, followed
   by a `featureTour` covering single-flight dedup, `prefetch`, batched `getAll`, conditional (304)
@@ -194,6 +239,66 @@ What every consuming app touches daily; highest user-facing leverage.
 
 Make the fetch path cheap and stampede-proof under real-world conditions.
 
+- [ ] **A second horizon: how long stale is still servable** *(design first; decide before 1.0)* —
+  the store has exactly one horizon, freshness, and past it a value is servable forever:
+  `StaleWhileRevalidate` serves week-old data with `isStale = true`, and stale-if-error falls back
+  to it without limit. Real policies have a ceiling — "show cached prices, but never ones older than
+  a day" — and expressing it today means the caller inspecting a `writtenAtMillis` it cannot see.
+  Add `freshness { maxStale }` (past it the entry is treated as *missing*: `Loading(null)`, a
+  `CacheMissException`, a fetch that fails without fallback) and let the origin declare it too:
+  RFC 5861's `stale-while-revalidate=N` and `stale-if-error=N` are precisely Aquifer's two stale
+  behaviours, named by the standard the library is named after, and `okHttpConditionalFetcher`
+  currently ignores both (`respectCacheControl` would parse them). The catch is storage shape: a
+  `staleFor` next to `freshFor` means a new field on `FetchResult.Fresh` and `PersistedEntry`, both
+  locked `data class`es whose constructors, `copy` and `componentN` all change — binary-breaking
+  after 1.0, defaulted and free before it (the on-disk envelope takes it the way it took
+  `serverFreshForMillis`). Precedence mirrors freshness: per-call > server > builder. Ship the
+  engine seam and the parser separately, as #50/#51 did. *(M)*
+- [ ] **Honour `Retry-After`** — `HttpException(code, url)` keeps the status and drops the headers,
+  and `retry { }` backs off on a fixed exponential schedule, so a `429` or `503` carrying
+  `Retry-After: 30` is retried after at most 250 ms, then 500 ms, straight into the same wall — the
+  one signal a well-behaved client is required to obey, discarded at the seam that was built to
+  carry status. Parse it in both OkHttp helpers (delta-seconds and HTTP-date) onto
+  `HttpException.retryAfter: Duration?` — a defaulted secondary constructor, since the two-argument
+  one is locked — and give `RetryConfig` a per-failure delay override
+  (`delayFor: (Throwable, attempt: Int) -> Duration?`, `null` meaning "use the schedule") that the
+  retry loop consults before its own backoff and reports through `onFetchRetried` as the real
+  delay. Whether it also seeds the negative-cache window is a second decision: a server-declared
+  30 s suppression is exactly what that window is for, but the streak arithmetic should not
+  multiply it. *(S)*
+- [ ] **One `NetworkCallback` per process, and a validated network** — `revalidateOnReconnect`
+  registers a `ConnectivityManager.NetworkCallback` per call for the store's lifetime, so an app
+  with a store per data family holds N registrations, each an IPC target on every network event,
+  and Android 11+ caps a process at 100 and throws `TooManyRequestsException` past it — a limit an
+  app reaches by following this library's own "one Aquifer per data family" advice. Share one
+  ref-counted `connectivityRestoredFlow` per `applicationContext` (a `shareIn`-style upstream that
+  registers on the first collector and unregisters after the last). Separately, the request asks
+  only for `NET_CAPABILITY_INTERNET`, which a captive-portal Wi-Fi satisfies before any byte can
+  pass: the reconnect sweep fires into the portal, fails, and — with negative caching on — the
+  failure memory then suppresses the sweep for the *real* reconnect that follows. Requiring
+  `NET_CAPABILITY_VALIDATED` is the standard fix and is API 23+, the same seam the Robolectric
+  multi-SDK item in 0.5 exists to test; below 23 keep today's behaviour and say so. *(S)*
+- [ ] **Chunk explicit batches by `maxBatchSize`** — the cap is honoured by the coalescing
+  accumulator alone. `getAll`, `streamMany`, `prefetchAll` and the reconnect sweep hand `startBatch`
+  their whole key set and it dispatches one call, so a backend that accepts at most 100 ids per
+  request — the usual shape, whether from URL length or an explicit cap — receives 500 and answers
+  with an error that fails every key. Callers currently chunk by hand and lose the single
+  round-trip they configured a batch fetcher for; the SQLDelight adapter already does the same
+  chunking at the storage layer for the same reason. Split the started set into `maxBatchSize`
+  chunks, each its own retry-all unit (a failing chunk fails only its keys; `onFetchRetried` stays
+  per key), and let the cap be set without a coalescing window — today it lives only on the
+  windowed `batchFetcher` overload, so a non-coalescing store cannot express it. *(S)*
+- [ ] **Bound what a stalled collector can buffer** *(design first)* — every stream drains the bus
+  through a `Channel.UNLIMITED` buffer so that one slow screen can never stall the engine; the
+  README sells the isolation and the KDoc names the cost, which is unbounded memory per stalled
+  collector on a busy store. `DataState` is a snapshot, not a log: a collector only ever needs the
+  newest state of its key, and the watermark logic already rejects anything older than what it has
+  applied. So the buffer can be *conflated* per key — keep the latest `Updated`/drop and the latest
+  transition — instead of replaying history. The trade to write down: a collector that stalls
+  through a `Fetching` → `Updated` pair sees only the `Updated`, which is what a UI wants and what
+  `distinctUntilChanged` would have collapsed anyway, but `BackpressureTest`'s "every event
+  arrives" assertions become "the final state arrives". A plain cap with drop-oldest is the fallback
+  if per-key conflation complicates the tracker. *(M)*
 - [ ] **Stop the refresh path re-reading each entry for its validator** *(deprioritised — see the
   hazard below)* — on any validator-aware store (`conditionalFetcher` *or*
   `conditionalBatchFetcher`), every `refreshWith` slice calls `load(key)` to obtain `prior` before
@@ -399,6 +504,51 @@ whole point (native batched transactions, a disk-wide `invalidateWhere`) is inex
 through a single-key `SourceOfTruth`, so building the adapters first would either hardcode
 N-round-trip behavior or force a contract break mid-milestone.
 
+- [ ] **Adapter parity — or a written reason for the gap** — the file store has
+  `maxEntries`/`maxBytes`, `cipher`, and `schemaVersion`/`migrate`; the SQLDelight store has none of
+  the three, so the README's bounded-disk, encryption-at-rest and migration sections silently
+  apply to one adapter. Each gap has a different right answer. *Bounding* is easier in SQL (an
+  access-time column and `DELETE … ORDER BY accessedAt LIMIT …`) but the table has no such column
+  and `readAll` records no recency — a schema change, which is the next item's concern. *Value
+  migration* is cheap parity: the value is JSON text, so the same envelope trick applies.
+  *Encryption* is a genuine decision: SQLCipher encrypts the whole database, keys included, which a
+  `ValueCipher` on the value column would leave in plaintext — so parity may be the wrong answer
+  and "use a SQLCipher driver" the right one, but then the KDoc and README must say so wherever
+  they advertise the `cipher` seam. Do the two, decide the third, and document the matrix. *(M)*
+- [ ] **Own the SQLDelight table's evolution** — `Entry.sq` is at schema version 1 with no
+  migrations, and the KDoc hands the schema lifecycle to the caller: "the store itself never creates
+  or migrates the schema". That is the wrong owner for a table the caller did not design. The day
+  Aquifer adds a column — the file envelope has already grown `validator`, `serverFreshForMillis`
+  and `schemaVersion`, each defaulted — every existing database is at version 1, `Schema.version`
+  reads 2, and the consumer is asked to write a migration for someone else's table. Commit to
+  shipping a `.sqm` with every schema change, turn on `verifyMigrations` (and derive the schema
+  from the migrations) so CI proves the chain from every past version, and document
+  `Schema.migrate(driver, oldVersion, newVersion)` as the consumer's one call. While here, run this
+  module on the JDK 11 launcher too: it is the only publishing module the `jvm11-runtime` job
+  skips, and #46 recorded no reason — establish whether that is a real incompatibility of the test
+  driver (then say so, and that the *module* is still JVM-11 bytecode) or an oversight. *(S–M)*
+- [ ] **Expired-entry purge** *(design first)* — flagged as "a separate companion" when
+  `evictMemory` shipped and never listed since. Staleness is judged on read; nothing ever *removes*
+  an expired entry. In memory the LRU bounds that, so the cost is resident dead entries until
+  pressure. On disk nothing does: an unbounded file store keeps every key ever fetched, and a key
+  space of search queries or paginated ids grows a directory forever — the file store's
+  `maxEntries`/`maxBytes` are the mitigation, not a fix, and the SQLDelight store has neither. The
+  memory half is trivial: a `purgeExpired()` sweep under the memory monitor, silent and unfenced
+  like `trimToSize`. The disk half is the design: the TTL lives in the engine and the store cannot
+  see it, so either the engine enumerates (`keysWhere` + `readAll` + `deleteMany` — enumerable
+  stores only, and a full-table read) or the SPI gains a `deleteWrittenBefore(millis)` that a SQL
+  store answers in one statement and the file store answers with `null`, meaning unsupported, like
+  `keys()`. Either way it is an `Aquifer` member, so it queues on the interface-stance decision in
+  the 1.0 docket. *(S–M)*
+- [ ] **A Windows leg for the file store** — "JVM services" is a stated target and every CI job is
+  `ubuntu-latest`. `moveIntoPlace` falls back to a plain replace only on
+  `AtomicMoveNotSupportedException`; on Windows an atomic replace of a file that a concurrent
+  `readBytes` still holds open is expected to fail with a different `FileSystemException`, which
+  would surface as a thrown `put` or a failed write-through rather than the documented "reads see
+  the old entry or the new one". Expected, not verified — which is what the leg is for. One
+  `windows-latest` job running `:aquifer-persistence-file:test` (and `:aquifer-core:test`) answers
+  it cheaply; if the hazard is real, the fix is a bounded retry on the sharing violation or a
+  documented Windows caveat, and either beats the current silence. *(S)*
 - [ ] **Proto DataStore adapter** (`aquifer-persistence-datastore`) *(deferred)* — the two SPI
   capabilities it was sequenced behind have both shipped, and the SQLDelight adapter already proves
   out the queryable/enumerable case, so what remains is the shape Proto DataStore is *worst* at: it
@@ -443,6 +593,47 @@ N-round-trip behavior or force a contract break mid-milestone.
 
 The engine's guarantees deserve machine-checked evidence.
 
+- [ ] **Make fencing observable, and stop reporting a discarded fetch as a success** —
+  `onFetchSucceeded` fires *before* `resolve()` and `commitFetched()`, so a fetch whose commit the
+  epoch gate drops — the headline guarantee doing its job — is reported as a success and then
+  thrown away with no event at all. An app cannot count how often fencing saves it, and a metrics
+  bridge over `AquiferEvents` over-reports. Nor can it tell a `304` from a full body: the bandwidth
+  `aquifer-okhttp` exists to save is unmeasurable short of wrapping the fetcher. The seam is
+  additive — `AquiferEvents` members have default bodies, so new ones break nobody:
+  `onFetchDiscarded(key)` for the fenced commit, a `notModified` flag (or a small outcome type) on
+  `onFetchSucceeded`, `onEvicted(key)` for LRU drops, and matching `CacheStats` counters
+  (`fetches`, `fetchFailures`, `notModified`, `discarded`) so `stats()` can answer "what is my 304
+  ratio" without a listener — `CacheStats` being a `data class`, that half is pre-1.0-only (see the
+  docket). Also missing, at the adapter level: the file store maps an `IOException` on read to
+  "absent, file kept", so a permissions or mount problem looks like a permanently cold cache with no
+  signal anywhere. Closing that needs the store to be *allowed* to say so — let `read` throw
+  transient I/O errors, with the engine catching them, treating the key as a miss and reporting an
+  `onPersistenceReadFailed` that mirrors the write-side hook — rather than an SPI that flattens
+  every failure into `null`. *(S–M)*
+- [ ] **Enforce the API-21 promise mechanically** — the README promises `aquifer-core` is
+  "deliberately free of `java.util` methods added in API 24", and `ActiveKeyRegistry` hand-rolls its
+  CAS loops to avoid `ConcurrentHashMap.merge`/`compute` for exactly that reason — but nothing
+  checks it. `aquifer-core` is a plain JVM module, so Android Lint's `NewApi` never sees its
+  sources, and JDK 11 compiles `compute` without comment; the promise holds only as long as every
+  reviewer remembers it. Two candidate guards: `animal-sniffer` against the `android-api-level-21`
+  signature jar on the JVM modules, or Lint from `aquifer-android` with `checkDependencies = true`.
+  Pick whichever demonstrably fails on a deliberate `compute` call, and keep that call as the
+  negative test. *(S)*
+- [ ] **A persistence test kit** — `aquifer-core` keeps an `InMemorySourceOfTruth` in its *test*
+  sources, so a consumer wanting to test the real engine against persistence without touching disk
+  writes their own, and the author of a custom `SourceOfTruth` has nothing to run their store
+  against: the SPI contract is six paragraphs of prose (null for undecodable, `readAll` omission,
+  `keys()` empty versus `null`, non-atomic `writeAll`, safety under concurrent calls) and no check.
+  Publish the in-memory store from `aquifer-test`, with failure and latency injection, and an
+  abstract contract suite (`AbstractSourceOfTruthContractTest`) that the two shipped adapters run
+  in their own test sets and a custom store's author subclasses. It is also the right first step
+  for the adapter-parity item in 0.4: a shared suite is how parity gets verified rather than
+  asserted. *(M)*
+- [ ] **Adopt AGP 9 and unpin the Gradle wrapper** — Dependabot is told to ignore wrapper versions
+  from 9.6 because Gradle 9.6 removed an internal API AGP 8.x still uses. A standing ignore rule
+  ages silently: the wrapper stops moving, nothing reports it, and the Kotlin and Compose plugin
+  bumps that keep arriving eventually assume a Gradle the wrapper cannot reach. Bump AGP, drop the
+  rule, and let the wrapper catch up in the same PR. *(S–M)*
 - [ ] **Robolectric multi-SDK config** — `Connectivity.isCurrentlyOnline()` uses the deprecated
   `allNetworks` because its replacement needs API 23 while `minSdk` is 21, and both Android test
   classes pin `@Config(sdk = [35])`. So the compatibility branch is exercised *only* at the API
@@ -605,6 +796,15 @@ The engine's guarantees deserve machine-checked evidence.
 Small, high-frequency conveniences surfaced while building the feature set; each must keep
 the existing fencing and single-flight guarantees.
 
+- [ ] **Weight-bounded memory cache** — `memoryCache { maxEntries }` counts entries, so a store
+  whose values are lists (a feed page, a search result, an order history under one key) holds a
+  handful of multi-megabyte entries under a cap that reads as generous, and the only lever is a
+  smaller count that also starves the small-value keys. Persistence already bounds by bytes; memory
+  cannot. Add `maxWeight` with a `weigher { key, value -> Int }` — the `LruCache.sizeOf` and
+  Caffeine shape — evicting least-recently-used until the total fits, counted in
+  `CacheStats.evictions` exactly like count eviction, with `trimToSize(n)` unchanged (it trims by
+  count; a `trimToWeight` can follow if anyone asks). An entry heavier than the whole budget is not
+  retained, mirroring the file store's absolute `maxBytes`. *(S–M)*
 - [ ] **Tag/group invalidation** — an opt-in tag index so a write can drop every key carrying a
   tag without the caller enumerating them — the relationship-invalidation ergonomic TanStack
   (key patterns) and RTK Query (`providesTags`/`invalidatesTags`) make first-class. Strictly a
@@ -717,6 +917,27 @@ the existing fencing and single-flight guarantees.
     only the active keys with nothing cached on reconnect, and reports `isStale = false` forever.
     Every README example happens to set a TTL, which is why the default has never bitten. Changing
     a default is a behavior break after 1.0 and free before.
+  - **`revalidateOn` returns nothing.** A subscription ends only when the trigger completes or the
+    store closes; a screen-scoped trigger cannot be detached, so a caller who wants that has to
+    wrap the trigger in a flow they can complete themselves. Returning a handle (`DisposableHandle`,
+    `Job`, or an `AutoCloseable`) is a return-type change — a binary break after 1.0, free before.
+  - **Streams go quiet on `close()` rather than completing.** Documented and deliberate, and a
+    footgun for the session-scoped store (log out, close, build a new one): a collector in any
+    longer-lived scope stays suspended forever, and the KDoc's answer — cancel the collecting scope
+    — assumes the collector knows the store is gone. Completing the flow (or failing it with
+    `AquiferException`, matching what awaiting `get` callers receive) is a behaviour change that
+    costs nothing now.
+  - **Every additive member queued on this file lands on the same abstract interface.** `peek`
+    (0.2), `purgeExpired` (0.4), `getAllStates` (this docket), tag invalidation (0.6): the
+    implementation-stance bullet above is on the critical path of all four, and each one shipped
+    before it is decided is another member `FakeAquifer` and every third-party implementor must
+    already carry. Decide it first.
+  - **The locked data classes.** `FetchResult.Fresh`, `PersistedEntry` and `CacheStats` are
+    `data class`es: a new field changes the constructor, `copy` and `componentN` at once, which BCV
+    rightly reports as a break. Two items above want one (`staleFor` in 0.3, the counters in 0.5).
+    Either land them before the freeze, or decide now that these types stop being `data class`es (a
+    plain class with a builder, or explicit `copy`) so 1.x can grow them. `HttpException` is exempt
+    — a class can gain a defaulted secondary constructor — which is how `retryAfter` is planned.
 - [ ] **Semver policy + CHANGELOG discipline** documented — what "public API" covers (the BCV
   dumps, not the internals), what a pre-1.0 source break costs, and one entry per change so
   the `[Unreleased]` sprawl the 0.1.0 tag cleans up does not simply re-accumulate. The
