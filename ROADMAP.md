@@ -164,10 +164,15 @@ What every consuming app touches daily; highest user-facing leverage.
   `load()` even when the entry is sitting in memory. So every navigation *back* to a screen renders
   at least one frame of skeleton over data the store already has — the flash the library exists to
   prevent, reintroduced at the last step. The engine already has the primitive: `memory.get` is a
-  non-suspending monitor read, the same class of operation `snapshot()`/`stats()` expose. A
-  `peek(key, maxAge: Duration? = null): DataState.Content<V>?` — memory only, no I/O, no fencing,
-  safe on a closed store — lets `collectAsState`/`collectAsStateMany` seed their `initialValue`
-  from it. It takes the same `maxAge` as `stream` and judges `isStale` by the same precedence
+  non-suspending monitor read. A `peek(key, maxAge: Duration? = null): DataState.Content<V>?` —
+  memory only, no I/O, no fencing, safe on a closed store — lets `collectAsState`/
+  `collectAsStateMany` seed their `initialValue` from it. One difference from `snapshot()`/`stats()`
+  to state rather than let a reader discover: `MemoryCache` is an access-ordered `LinkedHashMap`,
+  so a lookup promotes the key to most-recently-used. `peek` keeps that — it is a read, and it
+  counts as use exactly as the read inside `get`/`stream` does, and a key a screen is about to
+  render is precisely one the LRU should keep — but the Compose helpers evaluate it once per
+  remembered stream, not on every recomposition, so a recomposing screen does not keep re-touching
+  the entry. It takes the same `maxAge` as `stream` and judges `isStale` by the same precedence
   (per-call `maxAge`, else the entry's server horizon, else the jittered store TTL), so the seeded
   frame and the stream's first emission agree — `collectAsState` forwards the `maxAge` it already
   holds. The bus subscription that follows still catches anything newer, exactly as `prime()` does
@@ -275,8 +280,9 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
 - [ ] **Honour `Retry-After`** — `HttpException(code, url)` keeps the status and drops the headers,
   and `retry { }` backs off on a fixed exponential schedule, so a `429` or `503` carrying
   `Retry-After: 30` is retried after at most 250 ms, then 500 ms, straight into the same wall — the
-  one signal a well-behaved client is required to obey, discarded at the seam that was built to
-  carry status. Parse it in both OkHttp helpers (delta-seconds and HTTP-date) onto
+  one signal a well-behaved client is expected to honour (advisory in HTTP, never a protocol
+  requirement, but the origin's own statement of when to come back), discarded at the seam that
+  was built to carry status. Parse it in both OkHttp helpers (delta-seconds and HTTP-date) onto
   `HttpException.retryAfter: Duration?` — a defaulted secondary constructor, since the two-argument
   one is locked. The wiring has to cross the module boundary by itself, because `aquifer-core`
   cannot see `HttpException`: add a one-property core interface, `RetryAfterHint { val retryAfter:
@@ -577,8 +583,8 @@ N-round-trip behavior or force a contract break mid-milestone.
   still serve. So define purge against an explicit **retention** — `freshness { retention }`, an
   absolute age from `writtenAtMillis` that no horizon can extend (the app promises "nothing older
   than this is kept", and sets it at or above every stale ceiling it wants honoured). On that
-  definition the memory half is trivial: a sweep under the memory monitor, silent and unfenced like
-  `trimToSize`. The disk half is the mechanism: the cutoff is a single timestamp, so the SPI gains
+  definition the memory half is a sweep of resident entries by `writtenAtMillis`, and the disk
+  half is the mechanism: the cutoff is a single timestamp, so the SPI gains
   a `deleteWrittenBefore(millis)` — sound precisely because retention is defined on the write time
   alone — that a SQL store answers in one statement, and that the file store answers too, since it
   is the store this item is *about*: hashed filenames prevent enumerating *keys*, and a purge
@@ -589,8 +595,17 @@ N-round-trip behavior or force a contract break mid-milestone.
   leans on, but it is the filesystem's clock rather than the store's `WallClock`, so exactness
   means reading the envelope. A store that leaves the default (`null`, unsupported, like `keys()`)
   falls back to engine enumeration — `keysWhere` + `readAll` + `deleteMany` — which reaches only
-  enumerable stores. Either way it is an `Aquifer` member, so it queues on the interface-stance
-  decision in the 1.0 docket. *(S–M)*
+  enumerable stores. In both shapes the purge is a *commit*, with `invalidateWhere`'s structure:
+  the memory drop and the storage delete run under `commitGuard`, so no `put` or fetch commit can
+  land between classifying an entry as old and deleting it — the fallback classifies off-lock,
+  then re-reads only its candidates under the lock and deletes those still below the cutoff, the
+  same verify-under-the-lock shape as the hydration guard — and it advances `commitGen` and fences
+  the dropped keys, so an off-lock hydration that read a purged entry re-reads under the lock and
+  finds it gone, and observers see an invalidation (a fetch-capable stream refetches, a `CacheOnly`
+  one gets `Empty`) rather than a value that silently vanished. Enumeration plus an unconditional
+  `deleteMany` would not do: a `put` landing between the two deletes a value newer than the cutoff.
+  Either way it is an `Aquifer` member, so it queues on the interface-stance decision in the 1.0
+  docket. *(S–M)*
 - [ ] **A Windows leg for the file store** — "JVM services" is a stated target and every CI job is
   `ubuntu-latest`. `moveIntoPlace` falls back to a plain replace only on
   `AtomicMoveNotSupportedException`; on Windows an atomic replace of a file that a concurrent
@@ -655,10 +670,15 @@ The engine's guarantees deserve machine-checked evidence.
   `DefaultImpls` kept alongside for compatibility), so a listener compiled against today's
   interface inherits a new callback's default body — whereas a parameter added to an existing
   callback is a new descriptor (and, with a `Duration` in it, a new mangled name) that breaks every
-  compiled and every source override. So `onFetchSucceeded` stays exactly as it is, and the
-  additions are new callbacks: `onFetchDiscarded(key)` for the fenced commit,
-  `onFetchNotModified(key, duration)` for a 304 (fired alongside `onFetchSucceeded`, whose contract
-  does not change), `onEvicted(key)` for LRU drops — plus matching `CacheStats` counters
+  compiled and every source override. So `onFetchSucceeded` keeps its descriptor and changes
+  *when* it fires: it moves behind the commit gate and reports only a result that was committed
+  (a `Fresh` body, or a `NotModified` that re-aged the entry), while a new `onFetchDiscarded(key)`
+  reports the one the gate dropped — mutually exclusive, which is the whole point; the headline is
+  not met by adding a discard signal next to a success that still fires for the same fetch. That
+  is a behaviour change to an existing callback, not a signature change — a listener counting
+  successes sees fewer, correctly — and the CHANGELOG entry says so. The other additions are new
+  callbacks: `onFetchNotModified(key, duration)` for a 304 (fired alongside `onFetchSucceeded`),
+  `onEvicted(key)` for LRU drops — plus matching `CacheStats` counters
   (`fetches`, `fetchFailures`, `notModified`, `discarded`) so `stats()` can answer "what is my 304
   ratio" without a listener — `CacheStats` being a `data class`, that half is pre-1.0-only (see the
   docket). Also missing, at the adapter level: the file store maps an `IOException` on read to
