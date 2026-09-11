@@ -171,9 +171,11 @@ What every consuming app touches daily; highest user-facing leverage.
   (per-call `maxAge`, else the entry's server horizon, else the jittered store TTL), so the seeded
   frame and the stream's first emission agree — `collectAsState` forwards the `maxAge` it already
   holds. The bus subscription that follows still catches anything newer, exactly as `prime()` does
-  today. It is a new interface member, so it lands on the
-  implementation-stance decision in the 1.0 docket; `previewAquifer` and `fakeAquifer` get trivial
-  bodies. *(S–M)*
+  today. Seeding is for the cache-reading strategies only: `Freshness.NetworkOnly` bypasses memory
+  and persistence by contract, so under it the initial state stays `Loading(null)` (the empty map
+  for the multi-key form), exactly as the stream itself skips its preload. It is a new interface
+  member, so it lands on the implementation-stance decision in the 1.0 docket; `previewAquifer` and
+  `fakeAquifer` get trivial bodies. *(S–M)*
 - [ ] **Preview states, not just values** — `previewAquifer` seeds *values*: a stream emits
   `Content(value, MEMORY)` or `Empty`, nothing else. The two layouts a `@Preview` most needs to show
   — the loading skeleton and the failure banner — cannot be previewed at all, and neither can the
@@ -259,7 +261,13 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   each stale behaviour consults its own. The builder's `maxStale` is the app's ceiling on both:
   a ceiling composes by `min` with whatever the server declared, not by the precedence the
   freshness horizon uses, since "serve stale no longer than this" is a promise the app makes
-  regardless of the origin's generosity. The catch is storage shape: two fields next to `freshFor`
+  regardless of the origin's generosity. State its reach precisely, because it is narrower than the
+  wording suggests: like `isStale` today, the ceiling is judged when the store reads or emits — a
+  `get`, a stream's prime, an event on the bus — and nothing schedules a wake-up at the boundary,
+  so a collector that has gone quiet keeps its last `Content` past `maxStale` until something is
+  emitted. The promise is "never *served* past this", not "never *displayed* past this"; a timer at
+  the horizon is a separate decision, and one that would apply to `isStale` just as much. The catch
+  is storage shape: two fields next to `freshFor`
   on `FetchResult.Fresh` and `PersistedEntry`, both locked `data class`es whose constructors,
   `copy` and `componentN` all change — binary-breaking after 1.0, defaulted and free before it (the
   on-disk envelope takes them the way it took `serverFreshForMillis`). Ship the engine seam and the
@@ -270,10 +278,15 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   one signal a well-behaved client is required to obey, discarded at the seam that was built to
   carry status. Parse it in both OkHttp helpers (delta-seconds and HTTP-date) onto
   `HttpException.retryAfter: Duration?` — a defaulted secondary constructor, since the two-argument
-  one is locked — and give `RetryConfig` a per-failure delay override
-  (`delayFor: (Throwable, attempt: Int) -> Duration?`, `null` meaning "use the schedule") that the
-  retry loop consults before its own backoff and reports through `onFetchRetried` as the real
-  delay. Whether it also seeds the negative-cache window is a second decision: a server-declared
+  one is locked. The wiring has to cross the module boundary by itself, because `aquifer-core`
+  cannot see `HttpException`: add a one-property core interface, `RetryAfterHint { val retryAfter:
+  Duration? }`, that `HttpException` implements, and have the retry loop consult it on every
+  failure it is about to back off from — the hint replaces the computed delay outright
+  (`maxDelay` does not cap it; the server's instruction is the point), `retryOn` still decides
+  *whether* to retry, and `onFetchRetried` reports the delay actually used. `RetryConfig` also gains
+  `delayFor: (Throwable, attempt: Int) -> Duration?` as the manual override for a transport that
+  carries the header some other way, `null` meaning "use the schedule". Whether it also seeds the
+  negative-cache window is a second decision: a server-declared
   30 s suppression is exactly what that window is for, but the streak arithmetic should not
   multiply it. *(S)*
 - [ ] **One `NetworkCallback` per process, and a validated network** — `revalidateOnReconnect`
@@ -565,12 +578,19 @@ N-round-trip behavior or force a contract break mid-milestone.
   absolute age from `writtenAtMillis` that no horizon can extend (the app promises "nothing older
   than this is kept", and sets it at or above every stale ceiling it wants honoured). On that
   definition the memory half is trivial: a sweep under the memory monitor, silent and unfenced like
-  `trimToSize`. The disk half is the mechanism: the cutoff is a single timestamp, so either the
-  engine enumerates (`keysWhere` + `readAll` + `deleteMany` — enumerable stores only, and a
-  full-table read) or the SPI gains a `deleteWrittenBefore(millis)` that a SQL store answers in one
-  statement and the file store answers with `null`, meaning unsupported, like `keys()` — sound
-  precisely because retention is defined on the write time alone. Either way it is an `Aquifer`
-  member, so it queues on the interface-stance decision in the 1.0 docket. *(S–M)*
+  `trimToSize`. The disk half is the mechanism: the cutoff is a single timestamp, so the SPI gains
+  a `deleteWrittenBefore(millis)` — sound precisely because retention is defined on the write time
+  alone — that a SQL store answers in one statement, and that the file store answers too, since it
+  is the store this item is *about*: hashed filenames prevent enumerating *keys*, and a purge
+  deletes by *file*. It walks its directory and drops every envelope whose `writtenAtMillis` is
+  below the cutoff, keeping the LRU accounting in step — a full scan, and under a `cipher` a
+  decrypt per file, because the timestamp lives inside the envelope — so it is an explicit call,
+  not something a write triggers. File mtime is the cheap approximation the LRU index already
+  leans on, but it is the filesystem's clock rather than the store's `WallClock`, so exactness
+  means reading the envelope. A store that leaves the default (`null`, unsupported, like `keys()`)
+  falls back to engine enumeration — `keysWhere` + `readAll` + `deleteMany` — which reaches only
+  enumerable stores. Either way it is an `Aquifer` member, so it queues on the interface-stance
+  decision in the 1.0 docket. *(S–M)*
 - [ ] **A Windows leg for the file store** — "JVM services" is a stated target and every CI job is
   `ubuntu-latest`. `moveIntoPlace` falls back to a plain replace only on
   `AtomicMoveNotSupportedException`; on Windows an atomic replace of a file that a concurrent
@@ -630,9 +650,15 @@ The engine's guarantees deserve machine-checked evidence.
   thrown away with no event at all. An app cannot count how often fencing saves it, and a metrics
   bridge over `AquiferEvents` over-reports. Nor can it tell a `304` from a full body: the bandwidth
   `aquifer-okhttp` exists to save is unmeasurable short of wrapping the fetcher. The seam is
-  additive — `AquiferEvents` members have default bodies, so new ones break nobody:
-  `onFetchDiscarded(key)` for the fenced commit, a `notModified` flag (or a small outcome type) on
-  `onFetchSucceeded`, `onEvicted(key)` for LRU drops, and matching `CacheStats` counters
+  additive as long as it stays *new members only*. The locked dump compiles the interface's
+  default bodies as JVM default methods (`public fun`, not `public abstract fun`, with
+  `DefaultImpls` kept alongside for compatibility), so a listener compiled against today's
+  interface inherits a new callback's default body — whereas a parameter added to an existing
+  callback is a new descriptor (and, with a `Duration` in it, a new mangled name) that breaks every
+  compiled and every source override. So `onFetchSucceeded` stays exactly as it is, and the
+  additions are new callbacks: `onFetchDiscarded(key)` for the fenced commit,
+  `onFetchNotModified(key, duration)` for a 304 (fired alongside `onFetchSucceeded`, whose contract
+  does not change), `onEvicted(key)` for LRU drops — plus matching `CacheStats` counters
   (`fetches`, `fetchFailures`, `notModified`, `discarded`) so `stats()` can answer "what is my 304
   ratio" without a listener — `CacheStats` being a `data class`, that half is pre-1.0-only (see the
   docket). Also missing, at the adapter level: the file store maps an `IOException` on read to
@@ -962,7 +988,9 @@ the existing fencing and single-flight guarantees.
     (0.2), `purgeExpired` (0.4), `getAllStates` (this docket), tag invalidation (0.6): the
     implementation-stance bullet above is on the critical path of all four, and each one shipped
     before it is decided is another member `FakeAquifer` and every third-party implementor must
-    already carry. Decide it first.
+    already carry. Decide it first. (`AquiferEvents` and `SourceOfTruth` are not in this bind: their
+    defaults compile to JVM default methods, so a new defaulted member there is binary-safe — see
+    the observability item in 0.5 — which is what lets `deleteWrittenBefore` land on the SPI.)
   - **The locked data classes.** `FetchResult.Fresh`, `PersistedEntry` and `CacheStats` are
     `data class`es: a new field changes the constructor, `copy` and `componentN` at once, which BCV
     rightly reports as a break. Two items above want new fields (the two stale horizons in 0.3,
