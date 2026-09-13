@@ -51,6 +51,20 @@ if (state.isLoading) RefreshIndicator()
 >     testImplementation("io.github.quasarapps:aquifer-test:0.1.0")          // fakeAquifer, FakeClock, settle()
 > }
 > ```
+>
+> **Bill of materials.** Import `aquifer-bom` to keep every Aquifer module on one version — declare
+> the platform once, then drop the version from each module (and never mix, say, `aquifer-core`
+> `0.2.0` with `aquifer-compose` `0.1.0`):
+>
+> ```kotlin
+> dependencies {
+>     implementation(platform("io.github.quasarapps:aquifer-bom:0.1.0"))
+>
+>     implementation("io.github.quasarapps:aquifer-core")
+>     implementation("io.github.quasarapps:aquifer-compose")
+>     testImplementation("io.github.quasarapps:aquifer-test")
+> }
+> ```
 
 ## Why Aquifer?
 

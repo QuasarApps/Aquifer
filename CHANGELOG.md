@@ -9,6 +9,10 @@ versions may contain breaking changes.
 
 ### Added
 
+- `aquifer-bom` — a Maven BOM (`java-platform`) that pins all seven published Aquifer artifacts to a
+  single version. Import the platform once (`implementation(platform("io.github.quasarapps:aquifer-bom:<version>"))`)
+  and declare the individual modules without versions, so they upgrade in lockstep and cannot drift
+  apart — which matters pre-1.0, where a minor may break binary compatibility across modules.
 - `revalidateActive(force = true)` refreshes **every** active key regardless of staleness — the
   pull-to-refresh gesture, where the user is overriding the freshness bars the app chose for itself.
   Fetches are still shared per key and epoch-fenced, and `CacheOnly`-only keys are still not active.
