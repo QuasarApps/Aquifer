@@ -89,11 +89,17 @@ public class InMemorySourceOfTruth<K : Any, V : Any>(
      * A [delay] of this duration is issued at the start of every operation when positive, so a test
      * can model slow persistence under `runTest`'s virtual time. Must be non-negative (both here and
      * at construction). Default: [Duration.ZERO], i.e. no delay. Does not affect [entries].
+     *
+     * Stored at nanosecond precision behind the scenes, so a value finer than a nanosecond is
+     * truncated on read-back; [Duration.INFINITE] is preserved exactly (every operation then parks
+     * forever, the "storage never responds" knob).
      */
     public var latency: Duration
-        get() = latencyNanos.nanoseconds
+        get() = if (latencyNanos == Long.MAX_VALUE) Duration.INFINITE else latencyNanos.nanoseconds
         set(value) {
             require(value >= Duration.ZERO) { "latency must be non-negative, was $value" }
+            // INFINITE.inWholeNanoseconds already saturates to Long.MAX_VALUE, which the getter maps
+            // back to INFINITE; delay() treats that value as an effectively unbounded park.
             latencyNanos = value.inWholeNanoseconds
         }
 

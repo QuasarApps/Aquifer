@@ -13,6 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 class InMemorySourceOfTruthTest {
@@ -210,6 +211,18 @@ class InMemorySourceOfTruthTest {
     fun `a negative latency is rejected at construction and on assignment`() = runTest {
         assertFailsWith<IllegalArgumentException> { InMemorySourceOfTruth<String, Int>(latency = -(1.seconds)) }
         assertFailsWith<IllegalArgumentException> { store().latency = -(1.seconds) }
+    }
+
+    @Test
+    fun `latency round-trips, and INFINITE is preserved exactly`() = runTest {
+        val store = store()
+        store.latency = 5.seconds
+        assertEquals(5.seconds, store.latency)
+
+        // INFINITE saturates to Long.MAX_VALUE nanos; the getter maps that back rather than reading
+        // it as the ~292-year finite value the nanos would otherwise decode to.
+        store.latency = Duration.INFINITE
+        assertEquals(Duration.INFINITE, store.latency)
     }
 
     // --- Driven through a real Aquifer: the fixture's whole point is exercising the engine's
