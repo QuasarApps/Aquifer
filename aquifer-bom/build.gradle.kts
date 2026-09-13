@@ -7,9 +7,12 @@ plugins {
 
 group = "io.github.quasarapps"
 
-// A BOM constrains, not depends: it pins each Aquifer artifact to this build's version so a
-// consumer picks one version line and cannot mix modules (pre-1.0 minors may break binary
-// compatibility across modules, per the CHANGELOG header).
+// A BOM constrains, not depends: it supplies the version for each Aquifer artifact a consumer
+// declares *without* one, so importing the platform aligns the modules on this build's version.
+// These are ordinary, overridable platform constraints — not `enforcedPlatform`: an explicit or
+// transitive version still wins, the standard BOM contract and the right one for a library (forcing
+// a version onto a consumer's graph is not ours to do). It matters pre-1.0, where a minor may break
+// binary compatibility across modules, so declaring one version keeps them in step by default.
 dependencies {
     constraints {
         api(project(":aquifer-core"))

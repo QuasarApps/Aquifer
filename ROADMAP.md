@@ -48,11 +48,12 @@ and the version bump off `-SNAPSHOT`.
 - [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
   published coordinates from a clean project, and confirm the snippet still lists all seven
   published modules. *(S)*
-- [ ] **Publish an `aquifer-bom`** — seven artifacts move in lockstep and, per the CHANGELOG header,
+- [x] **Publish an `aquifer-bom`** (shipped) — seven artifacts move together and, per the CHANGELOG header,
   pre-1.0 minors may break binary compatibility, so `aquifer-core` 0.2.0 next to `aquifer-compose`
   0.1.0 fails at link time rather than at compile time. A Maven BOM — a `java-platform` module
-  published through the same plugin, so it joins the `publishingModules` gate automatically — makes
-  lockstep the default and turns the install snippet into one version line. Cheapest right after
+  published through the same plugin, so it joins the `publishingModules` gate automatically —
+  supplies one version for the modules declared without one (an ordinary, overridable BOM, not
+  `enforcedPlatform`) and turns the install snippet into one version line. Cheapest right after
   the first release, while the coordinates are still being written down. *(S)*
 - [x] **"Coming from Store5" migration guide** (shipped) — `docs/coming-from-store5.md`, linked from
   the README's comparison section. Written against Store5's current documentation rather than from

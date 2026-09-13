@@ -52,9 +52,10 @@ if (state.isLoading) RefreshIndicator()
 > }
 > ```
 >
-> **Bill of materials.** Import `aquifer-bom` to keep every Aquifer module on one version — declare
-> the platform once, then drop the version from each module (and never mix, say, `aquifer-core`
-> `0.2.0` with `aquifer-compose` `0.1.0`):
+> **Bill of materials.** Import `aquifer-bom` and declare the Aquifer modules **without** versions —
+> the BOM supplies one version for all of them, so you bump them together rather than by hand. Like
+> any Maven BOM these are defaults for versionless declarations, not a lock: an explicit version on
+> a module still wins, so keep them omitted to stay aligned.
 >
 > ```kotlin
 > dependencies {
