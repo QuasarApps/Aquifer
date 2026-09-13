@@ -9,6 +9,16 @@ versions may contain breaking changes.
 
 ### Added
 
+- Fetch retries can honour a server-declared wait. A failure that implements the new
+  `RetryAfterHint` interface (`retryAfter: Duration?`) has that wait used instead of the computed
+  exponential backoff for that attempt, uncapped by `maxDelay` — the seam a transport uses to carry
+  a `429`/`503` `Retry-After` into the engine, which has no HTTP types of its own. A new
+  `retry { delayFor = { throwable, attempt -> … } }` hook is the manual override, sitting above the
+  hint: the delay precedence is `delayFor` → the failure's `RetryAfterHint` → the computed schedule,
+  and the first non-`null` wins. Both affect only *how long* to wait, never *whether* to retry
+  (`retryOn`) or how many times (`maxAttempts`); `onFetchRetried` reports whichever delay won.
+  Purely additive — a store that sets neither behaves exactly as before. (The `aquifer-okhttp`
+  parser that reads the `Retry-After` header onto `HttpException` is a separate follow-up.)
 - `revalidateActive(force = true)` refreshes **every** active key regardless of staleness — the
   pull-to-refresh gesture, where the user is overriding the freshness bars the app chose for itself.
   Fetches are still shared per key and epoch-fenced, and `CacheOnly`-only keys are still not active.

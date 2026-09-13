@@ -14,6 +14,9 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
+/** A transport failure carrying a server `Retry-After`, for the [RetryAfterHint] precedence tests. */
+private class HintedFailure(override val retryAfter: Duration?) : IOException("busy"), RetryAfterHint
+
 class RetryTest {
 
     @Test
@@ -229,5 +232,139 @@ class RetryTest {
                 retry { maxDelay = Duration.INFINITE }
             }
         }
+    }
+
+    @Test
+    fun `a RetryAfterHint replaces the computed delay and is not capped by maxDelay`() {
+        val policy = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 5.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+        )
+
+        // 60s is past both the 1s schedule and the 5s cap; the server's stated wait is honoured whole.
+        assertEquals(60.seconds, policy.delayAfter(1, HintedFailure(60.seconds)))
+    }
+
+    @Test
+    fun `a RetryAfterHint with a null retryAfter falls back to the computed schedule`() {
+        val policy = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 30.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+        )
+
+        assertEquals(1.seconds, policy.delayAfter(1, HintedFailure(null)))
+    }
+
+    @Test
+    fun `delayFor overrides both the schedule and a RetryAfterHint, uncapped by maxDelay`() {
+        val policy = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 5.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+            delayFor = { _, attempt -> 42.seconds * attempt },
+        )
+
+        // delayFor sits at the top of the precedence and is uncapped, so it wins over the hint.
+        assertEquals(42.seconds, policy.delayAfter(1, HintedFailure(9.seconds)))
+        assertEquals(84.seconds, policy.delayAfter(2, IOException()))
+    }
+
+    @Test
+    fun `a null-returning delayFor defers to the RetryAfterHint, then to the schedule`() {
+        val policy = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 30.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+            delayFor = { _, _ -> null },
+        )
+
+        assertEquals(7.seconds, policy.delayAfter(1, HintedFailure(7.seconds))) // defers to the hint
+        assertEquals(1.seconds, policy.delayAfter(1, IOException())) // then to the schedule
+    }
+
+    @Test
+    fun `a throwing delayFor defers rather than failing the retry`() {
+        val policy = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 30.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+            delayFor = { _, _ -> error("override bug") },
+        )
+
+        assertEquals(7.seconds, policy.delayAfter(1, HintedFailure(7.seconds))) // threw -> defer to hint
+    }
+
+    @Test
+    fun `a server Retry-After drives the wait and is reported to onFetchRetried`() = runTest {
+        var calls = 0
+        val retriedDelays = mutableListOf<Duration>()
+        val store = aquifer<String, String> {
+            scope(backgroundScope)
+            fetcher {
+                calls++
+                if (calls == 1) throw HintedFailure(12.seconds)
+                "recovered"
+            }
+            retry {
+                maxAttempts = 2
+                initialDelay = 250.milliseconds // the schedule the hint replaces
+                maxDelay = 1.seconds // and is not capped by
+                jitter = 0.0
+            }
+            events(object : AquiferEvents<String> {
+                override fun onFetchRetried(key: String, attempt: Int, error: Throwable, nextDelay: Duration) {
+                    retriedDelays += nextDelay
+                }
+            })
+        }
+
+        val startedAt = testScheduler.currentTime
+        assertEquals("recovered", store.get("k"))
+        assertEquals(2, calls)
+        // The 12s hint drove the wait — not the 250ms schedule, and uncapped by the 1s maxDelay.
+        assertEquals(12.seconds.inWholeMilliseconds, testScheduler.currentTime - startedAt)
+        assertEquals(listOf(12.seconds), retriedDelays)
+    }
+
+    @Test
+    fun `delayFor overrides the wait end to end`() = runTest {
+        var calls = 0
+        val store = aquifer<String, String> {
+            scope(backgroundScope)
+            fetcher {
+                calls++
+                if (calls < 2) throw IOException("flaky")
+                "ok"
+            }
+            retry {
+                maxAttempts = 2
+                initialDelay = 250.milliseconds
+                maxDelay = 1.seconds
+                jitter = 0.0
+                delayFor = { _, _ -> 5.seconds } // replaces the schedule, uncapped by maxDelay
+            }
+        }
+
+        val startedAt = testScheduler.currentTime
+        assertEquals("ok", store.get("k"))
+        assertEquals(2, calls)
+        assertEquals(5.seconds.inWholeMilliseconds, testScheduler.currentTime - startedAt)
     }
 }

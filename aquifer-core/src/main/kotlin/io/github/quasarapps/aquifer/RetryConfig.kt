@@ -80,4 +80,19 @@ public class RetryConfig internal constructor() {
      * Cancellation is never passed to this predicate.
      */
     public var retryOn: (Throwable) -> Boolean = { true }
+
+    /**
+     * A manual per-failure delay override: given the [Throwable] and the 1-based number of the
+     * [attempt] that just failed, return the delay to wait before the next attempt, or `null` to
+     * defer to the normal decision. It sits at the **top** of the delay precedence —
+     * `delayFor` → the failure's [RetryAfterHint] → the computed exponential schedule — so an app
+     * can override even a server-sent `Retry-After`, or supply one for a transport that carries the
+     * header some other way. A returned delay **replaces** the computed backoff and is *not* capped
+     * by [maxDelay]; a non-positive delay retries immediately.
+     *
+     * This decides only *how long* to wait, never *whether* to retry: [retryOn] still gates that
+     * and [maxAttempts] still bounds the count. An override that itself throws is treated as `null`
+     * (defer). Defaults to always deferring, so behaviour is unchanged unless set.
+     */
+    public var delayFor: (throwable: Throwable, attempt: Int) -> Duration? = { _, _ -> null }
 }
