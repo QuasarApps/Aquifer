@@ -9,15 +9,17 @@ versions may contain breaking changes.
 
 ### Added
 
-- `batchFetcher` and `conditionalBatchFetcher` now take an optional `maxBatchSize`, and the cap
-  is honoured by the explicit multi-key reads (`getAll`, `streamMany`, `prefetchAll`,
-  `revalidateActive`), not only the auto-coalescing window. A key set larger than the cap is
-  split into independent calls of at most `maxBatchSize`, each its own retry-all unit — so a
-  backend that limits ids per request (a URL-length cap, an explicit server limit) receives
-  calls no larger than it accepts, and a failing chunk fails only its own keys. The default is
-  unchanged: with no cap the whole set still goes out as one call. `maxBatchSize` was previously
-  reachable only on the windowed `batchFetcher(coalesceWindow, maxBatchSize)` overload, where it
-  bounded the accumulator alone; a non-coalescing store could not express it.
+- `batchFetcher(maxBatchSize) { … }` and `conditionalBatchFetcher(maxBatchSize) { … }` overloads
+  that cap how many keys go in one backend call. A key set larger than the cap is split into
+  independent calls of at most `maxBatchSize`, each its own retry-all unit — so a backend that
+  limits ids per request (a URL-length cap, an explicit server limit) receives calls no larger than
+  it accepts, and a failing chunk fails only its own keys. The cap is honoured by every explicit
+  multi-key read (`getAll`, `streamMany`, `prefetchAll`, `revalidateActive`). These are **purely
+  additive** overloads: the existing `batchFetcher { … }` and `conditionalBatchFetcher { … }`
+  signatures are untouched, so recompilation and linkage are unaffected, and with no cap the whole
+  set still goes out as one call. Until now `maxBatchSize` was reachable only on the windowed
+  `batchFetcher(coalesceWindow, maxBatchSize)` overload; a non-coalescing store could not express
+  a per-call cap at all.
 
 - `revalidateActive(force = true)` refreshes **every** active key regardless of staleness — the
   pull-to-refresh gesture, where the user is overriding the freshness bars the app chose for itself.
@@ -41,6 +43,15 @@ versions may contain breaking changes.
 
 ### Changed
 
+- `maxBatchSize` on the windowed `batchFetcher(coalesceWindow, maxBatchSize)` overload now also
+  bounds the explicit multi-key reads (`getAll`, `streamMany`, `prefetchAll`, `revalidateActive`),
+  where in 0.1.0 it bounded only the auto-coalescing accumulator's dispatch-early trigger. A store
+  already configured with that overload will now see an explicit `getAll` of more than
+  `maxBatchSize` keys split into several calls where it previously went out as one — the same cap,
+  applied on both paths. The chunks of a split read dispatch **sequentially** — one call completes
+  before the next begins, never fanned out concurrently — since a backend that caps ids per request
+  typically caps concurrency too, and a burst of simultaneous calls would defeat the purpose of the
+  cap.
 - Concurrent cold reads no longer pay for each other. The residual-hydration guard — which re-reads
   persisted state under the commit lock when a commit raced an off-lock read — was keyed on the
   store-global sequence counter, which *hydration itself advances*. So N concurrent cold reads of

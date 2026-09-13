@@ -78,7 +78,8 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * (decided per [freshness], exactly as [getAll] decides) are collapsed into one
      * [batch fetcher][AquiferBuilder.batchFetcher] call, dispatched immediately — so collecting
      * `streamMany` of 50 missing keys is one backend round-trip, not 50, even without a
-     * coalescing window (split into calls of at most `maxBatchSize` when the builder sets one).
+     * coalescing window (split into calls of at most
+     * [maxBatchSize][AquiferBuilder.batchFetcher] when the builder sets that cap).
      * Without a batch fetcher the keys are streamed individually (still
      * single-flight-deduped). Every per-key guarantee (fencing, negative caching, persistence,
      * events) is unchanged; batching is purely a fetch-transport optimization.
@@ -167,7 +168,8 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * mirror of [prefetch] (and the write-free twin of [getAll]). Returns immediately; the keys
      * that need loading (decided per [freshness], exactly as [prefetch] decides) are collapsed
      * into a single [batch fetcher][AquiferBuilder.batchFetcher] call in the store's scope (or
-     * into calls of at most `maxBatchSize` when the builder sets that cap), and the results land
+     * into calls of at most [maxBatchSize][AquiferBuilder.batchFetcher] when the builder sets
+     * that cap), and the results land
      * in the cache for the next [get]/[getAll]/[stream].
      *
      * Honours [freshness] for the *decision to fetch* — by default [Freshness.CacheFirst], so

@@ -360,18 +360,20 @@ class BatchFetchingTest {
     }
 
     @Test
-    fun `a failing chunk fails only its own keys`() = runTest {
+    fun `a failing chunk fails only its own keys, not the surviving chunk`() = runTest {
         val store = aquifer<String, Int> {
             scope(backgroundScope)
-            // maxBatchSize = 1 puts every key in its own chunk, so the failure of one cannot
-            // sink the others the way a single whole-set call would.
-            batchFetcher(maxBatchSize = 1) { keys ->
-                if (keys.single() == "b") throw IOException("b down")
+            // maxBatchSize = 2 over four keys makes two multi-key chunks, [a, b] and [c, d]. A
+            // throw sinks its *whole* chunk (batch-fetcher contract), so failing on "b" loses "a"
+            // too — but the other chunk, plural, must still resolve. maxBatchSize = 1 would prove
+            // nothing here: every chunk would be a singleton.
+            batchFetcher(maxBatchSize = 2) { keys ->
+                if ("b" in keys) throw IOException("first chunk down")
                 keys.associateWith { it.length }
             }
         }
 
-        assertEquals(mapOf("a" to 1, "c" to 1), store.getAll(linkedSetOf("a", "b", "c")))
+        assertEquals(mapOf("c" to 1, "d" to 1), store.getAll(linkedSetOf("a", "b", "c", "d")))
     }
 
     @Test
@@ -404,6 +406,69 @@ class BatchFetchingTest {
 
         store.getAll(linkedSetOf("a", "bb", "ccc", "dddd", "eeeee"))
         assertEquals(1, batches.size, "the default is a single unbounded call")
+    }
+
+    @Test
+    fun `chunks dispatch sequentially, one call at a time`() = runTest {
+        val started = mutableListOf<Set<String>>()
+        val gate = CompletableDeferred<Unit>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            // A backend that caps ids per request usually caps concurrency too, so the chunks
+            // must go out one at a time. The first chunk parks on the gate; were dispatch
+            // concurrent, the second chunk's call would be recorded while the gate is held.
+            batchFetcher(maxBatchSize = 2) { keys ->
+                started += keys
+                if (started.size == 1) gate.await()
+                keys.associateWith { it.length }
+            }
+        }
+
+        val result = async { store.getAll(linkedSetOf("a", "bb", "ccc", "dddd")) }
+        settle()
+        assertEquals(1, started.size, "the second chunk waits until the first call completes")
+
+        gate.complete(Unit)
+        assertEquals(mapOf("a" to 1, "bb" to 2, "ccc" to 3, "dddd" to 4), result.await())
+        assertEquals(2, started.size, "the second chunk dispatched only after the first finished")
+    }
+
+    @Test
+    fun `a fire-and-forget prefetchAll chunks by maxBatchSize too`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher(maxBatchSize = 2) { keys ->
+                batches += keys
+                keys.associateWith { it.length }
+            }
+        }
+
+        store.prefetchAll(linkedSetOf("a", "bb", "ccc", "dddd", "eeeee")) // returns immediately
+        // prefetchAll registers every key's slice synchronously, then dispatches the chunks on the
+        // store scope. Joining the last chunk's key drives that sequential dispatch to completion —
+        // "eeeee" resolves only after the earlier chunks have run — so we can assert on the count.
+        assertEquals(5, store.get("eeeee"), "the chunked prefetch warmed the cache")
+        assertEquals(3, batches.size, "the cap bounds the fire-and-forget path, not just getAll")
+        assertTrue(batches.all { it.size <= 2 }, "no chunk exceeds maxBatchSize")
+    }
+
+    @Test
+    fun `the coalescing overload's maxBatchSize also bounds an explicit getAll`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            // getAll dispatches its own keys immediately (ignoring the window) — but the size cap
+            // set on the coalescing overload must still split that immediate dispatch into chunks.
+            batchFetcher(coalesceWindow = 1.minutes, maxBatchSize = 2) { keys ->
+                batches += keys
+                keys.associateWith { it.length }
+            }
+        }
+
+        store.getAll(linkedSetOf("a", "bb", "ccc", "dddd", "eeeee"))
+        assertEquals(3, batches.size, "five keys, capped at two, dispatch as three chunks")
+        assertTrue(batches.all { it.size <= 2 }, "no chunk exceeds maxBatchSize")
     }
 
     @Test

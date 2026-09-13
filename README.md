@@ -313,10 +313,11 @@ or once `maxBatchSize` keys accumulate); a transient failure re-enters the next 
 If the backend caps how many ids a request may carry, pass `maxBatchSize` — with or without a
 window — and every multi-key fetch (`getAll`, `streamMany`, `prefetchAll`, `revalidateActive`)
 splits into calls no larger than the cap, each its own retry unit, so one oversized request never
-comes back an error that fails the whole screen:
+comes back an error that fails the whole screen. The chunks go out **sequentially**, one call at a
+time — a backend that caps ids per request usually caps concurrency too:
 
 ```kotlin
-batchFetcher(maxBatchSize = 100) { ids -> api.fetchUsers(ids) }   // 250 ids -> 100 + 100 + 50
+batchFetcher(maxBatchSize = 100) { ids -> api.fetchUsers(ids) }   // 250 ids -> 100, then 100, then 50
 ```
 
 When the backend speaks ETags, `conditionalBatchFetcher { validators -> … }` composes 304
