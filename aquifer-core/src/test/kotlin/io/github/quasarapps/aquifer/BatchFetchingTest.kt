@@ -444,11 +444,12 @@ class BatchFetchingTest {
             }
         }
 
-        store.prefetchAll(linkedSetOf("a", "bb", "ccc", "dddd", "eeeee")) // returns immediately
-        // prefetchAll registers every key's slice synchronously, then dispatches the chunks on the
-        // store scope. Joining the last chunk's key drives that sequential dispatch to completion —
-        // "eeeee" resolves only after the earlier chunks have run — so we can assert on the count.
-        assertEquals(5, store.get("eeeee"), "the chunked prefetch warmed the cache")
+        store.prefetchAll(linkedSetOf("a", "bb", "ccc", "dddd", "eeeee")) // returns having only launched
+        // The fetch decision, slice registration, and the sequential chunk calls all happen inside the
+        // launched store-scope coroutine; none of it blocks, so settle() drains the whole chain. A
+        // key that fell out of the chunking into a batch-of-one would show as a fourth entry, so the
+        // count of 3 is the proof the fire-and-forget path chunked.
+        settle()
         assertEquals(3, batches.size, "the cap bounds the fire-and-forget path, not just getAll")
         assertTrue(batches.all { it.size <= 2 }, "no chunk exceeds maxBatchSize")
     }

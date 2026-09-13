@@ -114,9 +114,12 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      * whose key set exceeds [maxBatchSize] is split into successive calls of at most that many
      * keys, dispatched one after another (never fanned out concurrently), each its own retry
      * unit — so a backend that caps ids per request receives calls no larger than it accepts,
-     * and a failing chunk fails only its own keys. Everything else matches the plain
-     * [batchFetcher]; to combine coalescing with a cap, use the [coalesceWindow][batchFetcher]
-     * overload instead.
+     * and a failing chunk fails only its own keys. Because the chunks are serial, their [retry]
+     * cycles are too: against a flaky backend a many-chunk read takes up to N × (attempts +
+     * backoff) to ultimately fail, where one unbounded call would have failed once — the cost of
+     * not stampeding a backend that limits concurrency alongside request size. Everything else
+     * matches the plain [batchFetcher]; to combine coalescing with a cap, use the
+     * [coalesceWindow][batchFetcher] overload instead.
      *
      * @param maxBatchSize the largest number of keys sent in one [fetch] call; must be ≥ 1.
      */
