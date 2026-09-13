@@ -326,8 +326,17 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   README sells the isolation and the KDoc names the cost, which is unbounded memory per stalled
   collector on a busy store. `DataState` is a snapshot, not a log: a collector only ever needs the
   newest state of its key, and the watermark logic already rejects anything older than what it has
-  applied. So the buffer can be *conflated* — keep the latest `Updated`/drop and the latest
-  transition for the collector's key — instead of replaying history. The trade to write down,
+  applied. So the buffer can be *conflated* — but by commit **sequence**, not by arrival. Emission
+  happens outside `commitGuard` (a `put`/`invalidate` broadcasts after releasing the lock), so two
+  racing mutations can reach a collector in the opposite of their commit order, which is why the
+  tracker already guards `Updated`/drop against its `newestSequence` watermark. Conflation must
+  carry that guard into the buffer: the value-or-drop slot keeps the **highest-sequence**
+  `Updated`/`Invalidated`/`ClearedBefore`/`ClearedAll`, so a lower-sequence event that merely
+  arrives later never displaces a newer committed one — a naive keep-the-last-arrival slot would
+  discard sequence 2 when sequence 1 lands after it and strand the collector stale. The
+  loading/failure transitions (`Fetching`/`Failed`) carry no sequence and are display hints, so
+  they conflate to the latest by arrival, exactly as the tracker applies them today. Conflated this
+  way rather than by replaying history, the trade to write down,
   because it is a behaviour change and not something the stream already does: a collector that
   stalls through a `Fetching` → `Updated` pair sees only the `Updated`. Today it sees both —
   `distinctUntilChanged` compares `Loading` and `Content`, which are different types and never
