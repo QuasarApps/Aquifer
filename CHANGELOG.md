@@ -24,6 +24,24 @@ versions may contain breaking changes.
   neither override behaves exactly as before. (The `aquifer-okhttp` parser that reads the
   `Retry-After` header onto `HttpException` is a separate follow-up.)
 
+- `batchFetcher(maxBatchSize) { … }` and `conditionalBatchFetcher(maxBatchSize) { … }` overloads
+  that cap how many keys go in one backend call. A key set larger than the cap is split into
+  independent calls of at most `maxBatchSize`, each its own retry-all unit — so a backend that
+  limits ids per request (a URL-length cap, an explicit server limit) receives calls no larger than
+  it accepts, and a failing chunk fails only its own keys. The cap is honoured by every explicit
+  multi-key read (`getAll`, `streamMany`, `prefetchAll`, `revalidateActive`). These are **purely
+  additive** overloads: the existing `batchFetcher { … }` and `conditionalBatchFetcher { … }`
+  signatures are untouched, so ordinary calls (trailing-lambda or not) and binary linkage are
+  unaffected, and with no cap the whole set still goes out as one call. The one source-level caveat
+  is a Kotlin callable reference to `conditionalBatchFetcher`: it gains a second overload, so an
+  unqualified `::conditionalBatchFetcher` with no expected type becomes ambiguous and needs a type
+  hint. (`::batchFetcher` was already overloaded with the windowed form, so it is unaffected by this
+  change.) Ordinary invocations never need a hint, and the JVM descriptors are unchanged so linkage
+  holds. Until now
+  `maxBatchSize` was reachable only on the windowed
+  `batchFetcher(coalesceWindow, maxBatchSize)` overload; a non-coalescing store could not express
+  a per-call cap at all.
+
 - `aquifer-bom` — a Maven BOM (`java-platform`) that supplies one version for all seven published
   Aquifer artifacts. Import the platform once (`implementation(platform("io.github.quasarapps:aquifer-bom:<version>"))`)
   and declare the individual modules without versions, so they align on a single version — which
@@ -53,6 +71,15 @@ versions may contain breaking changes.
 
 ### Changed
 
+- `maxBatchSize` on the windowed `batchFetcher(coalesceWindow, maxBatchSize)` overload now also
+  bounds the explicit multi-key reads (`getAll`, `streamMany`, `prefetchAll`, `revalidateActive`),
+  where in 0.1.0 it bounded only the auto-coalescing accumulator's dispatch-early trigger. A store
+  already configured with that overload will now see an explicit `getAll` of more than
+  `maxBatchSize` keys split into several calls where it previously went out as one — the same cap,
+  applied on both paths. The chunks of a split read dispatch **sequentially** — one call completes
+  before the next begins, never fanned out concurrently — since a backend that caps ids per request
+  typically caps concurrency too, and a burst of simultaneous calls would defeat the purpose of the
+  cap.
 - Concurrent cold reads no longer pay for each other. The residual-hydration guard — which re-reads
   persisted state under the commit lock when a commit raced an off-lock read — was keyed on the
   store-global sequence counter, which *hydration itself advances*. So N concurrent cold reads of

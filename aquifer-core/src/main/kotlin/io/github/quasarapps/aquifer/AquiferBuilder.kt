@@ -91,8 +91,8 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      * guarantee (single-flight dedup, fencing, negative caching, persistence, events) applies
      * per key, unchanged — batching is purely a fetch-transport optimization. To also
      * auto-coalesce individual fetches, use the [batchFetcher] overload that takes a
-     * `coalesceWindow`. The reactive and warm-up batch reads are [Aquifer.streamMany] and
-     * [Aquifer.prefetchAll].
+     * `coalesceWindow`; to cap the keys sent per call, use the one that takes a `maxBatchSize`.
+     * The reactive and warm-up batch reads are [Aquifer.streamMany] and [Aquifer.prefetchAll].
      *
      * The store's [retry] policy wraps both single-key fetches (including the batch of one a
      * `get` makes here) and the multi-key call [Aquifer.getAll] issues — a retryable transport
@@ -101,10 +101,36 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      */
     public fun batchFetcher(fetch: suspend (keys: Set<K>) -> Map<K, V>) {
         batchFetcher = fetch
-        // The last batchFetcher call fully defines batching: clear any coalescing a prior
-        // call to the overload below may have set, so the plain form means "no coalescing".
+        // The last batchFetcher call fully defines batching: clear any coalescing a prior call to
+        // another overload may have set, and drop any size cap, so the plain form means "no
+        // coalescing, no chunking — one unbounded call".
         coalesceWindow = Duration.ZERO
         maxBatchSize = Int.MAX_VALUE
+    }
+
+    /**
+     * A [batchFetcher] that **caps how many keys go in each call**. A multi-key read
+     * ([Aquifer.getAll]/[Aquifer.streamMany]/[Aquifer.prefetchAll]/[Aquifer.revalidateActive])
+     * whose key set exceeds [maxBatchSize] is split into successive calls of at most that many
+     * keys, dispatched one after another (never fanned out concurrently), each its own retry
+     * unit — so a backend that caps ids per request receives calls no larger than it accepts,
+     * and a failing chunk fails only its own keys. Because the chunks are serial, their [retry]
+     * cycles are too: against a flaky backend a many-chunk read takes up to N × (attempts +
+     * backoff) to ultimately fail, where one unbounded call would have failed once — the cost of
+     * not stampeding a backend that limits concurrency alongside request size. For the same reason
+     * the chunks are head-of-line blocked: a call that *hangs* (not just one that fails) stalls
+     * every later chunk until it returns, and with no store-level fetch timeout one wedged call
+     * holds up the whole read — so a fetcher with a cap set should carry its own request timeout.
+     * Everything else matches the plain [batchFetcher]; to combine coalescing with a cap, use the
+     * [coalesceWindow][batchFetcher] overload instead.
+     *
+     * @param maxBatchSize the largest number of keys sent in one [fetch] call; must be ≥ 1.
+     */
+    public fun batchFetcher(maxBatchSize: Int, fetch: suspend (keys: Set<K>) -> Map<K, V>) {
+        require(maxBatchSize >= 1) { "maxBatchSize must be at least 1, was $maxBatchSize" }
+        batchFetcher = fetch
+        coalesceWindow = Duration.ZERO
+        this.maxBatchSize = maxBatchSize
     }
 
     /**
@@ -120,7 +146,9 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      *
      * @param coalesceWindow how long to gather keys before dispatching a batch; must be
      *   positive and finite (use the single-argument [batchFetcher] for no coalescing).
-     * @param maxBatchSize dispatch early once this many distinct keys accumulate; must be ≥ 1.
+     * @param maxBatchSize the largest number of keys in one [fetch] call: the coalescing window
+     *   dispatches early once this many distinct keys accumulate, and an explicit multi-key read
+     *   ([Aquifer.getAll] and friends) is likewise split into calls no larger than this. Must be ≥ 1.
      */
     public fun batchFetcher(
         coalesceWindow: Duration,
@@ -159,10 +187,31 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      * violation and fails that key. [Aquifer.getAll]/[Aquifer.streamMany]/[Aquifer.prefetchAll]
      * dispatch one call through it; an individual `get`/`stream`/`prefetch` uses it as a batch of
      * one. Configure exactly one of [fetcher], [conditionalFetcher], [batchFetcher], or
-     * [conditionalBatchFetcher]; the auto-coalescing window is [batchFetcher]-only.
+     * [conditionalBatchFetcher]; the auto-coalescing window is [batchFetcher]-only. To cap the
+     * keys sent per call, use the overload that takes a `maxBatchSize`.
      */
     public fun conditionalBatchFetcher(fetch: suspend (validators: Map<K, String?>) -> Map<K, FetchResult<V>>) {
         conditionalBatchFetcher = fetch
+        // Drop any size cap a prior call set, so the plain form means one unbounded call.
+        maxBatchSize = Int.MAX_VALUE
+    }
+
+    /**
+     * A [conditionalBatchFetcher] that **caps how many keys go in each call** — the conditional
+     * mirror of [batchFetcher]'s `maxBatchSize` overload. A multi-key read whose key set exceeds
+     * [maxBatchSize] is split into successive calls of at most that many keys, dispatched one
+     * after another (never fanned out concurrently), each its own retry unit; a failing chunk
+     * fails only its own keys. Everything else matches the plain [conditionalBatchFetcher].
+     *
+     * @param maxBatchSize the largest number of keys sent in one [fetch] call; must be ≥ 1.
+     */
+    public fun conditionalBatchFetcher(
+        maxBatchSize: Int,
+        fetch: suspend (validators: Map<K, String?>) -> Map<K, FetchResult<V>>,
+    ) {
+        require(maxBatchSize >= 1) { "maxBatchSize must be at least 1, was $maxBatchSize" }
+        conditionalBatchFetcher = fetch
+        this.maxBatchSize = maxBatchSize
     }
 
     /** Configures the in-memory cache; see [MemoryCacheConfig]. */
