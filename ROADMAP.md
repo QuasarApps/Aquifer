@@ -599,15 +599,27 @@ N-round-trip behavior or force a contract break mid-milestone.
   leans on, but it is the filesystem's clock rather than the store's `WallClock`, so exactness
   means reading the envelope. A store that leaves the default (`null`, unsupported, like `keys()`)
   falls back to engine enumeration — `keysWhere` + `readAll` + `deleteMany` — which reaches only
-  enumerable stores. In both shapes the purge is a *commit*, with `invalidateWhere`'s structure:
-  the memory drop and the storage delete run under `commitGuard`, so no `put` or fetch commit can
-  land between classifying an entry as old and deleting it — the fallback classifies off-lock,
-  then re-reads only its candidates under the lock and deletes those still below the cutoff, the
-  same verify-under-the-lock shape as the hydration guard — and it advances `commitGen` and fences
-  the dropped keys, so an off-lock hydration that read a purged entry re-reads under the lock and
-  finds it gone, and observers see an invalidation (a fetch-capable stream refetches, a `CacheOnly`
-  one gets `Empty`) rather than a value that silently vanished. Enumeration plus an unconditional
-  `deleteMany` would not do: a `put` landing between the two deletes a value newer than the cutoff.
+  enumerable stores. In both shapes the purge is a *commit* under `commitGuard`, but the notification
+  cannot be per-key the way `invalidateWhere`'s is, and the reason is the item's real design work.
+  The engine can name only the keys it tracks in-process — resident in memory, or with an active
+  collector — and for those the commit is exactly `invalidateWhere`'s: drop under the lock, advance
+  `commitGen`, fence, and emit a per-key `Invalidated`, so a fetch-capable stream refetches and a
+  `CacheOnly` one gets `Empty`. The file store's `deleteWrittenBefore`, though, deletes *disk-only*
+  files it cannot map back to keys: the filename is a one-way SHA-256 and the `Stored` envelope
+  carries no key, so a scan that removes a pre-cutoff file learns a timestamp, never a key. There
+  is thus no per-key fence or event for a purely disk-only entry — and none is needed: such an
+  entry is by definition not resident and has no collector, so nothing holds it to fence and nobody
+  observes it, and its next read simply misses. What *does* need reconciling is an active collector
+  still showing a value whose key was purged (evicted from memory but kept in the tracker's
+  `last`), and a keyless watermark covers exactly that: broadcast `ClearedBefore(cutoffMillis,
+  sequence)` — the retention analog of the existing keyless `ClearedAll` — and every tracker drops
+  its own value when its last-seen `writtenAtMillis` is below the cutoff, refetching or emitting
+  `Empty` like any other drop, without the engine naming the key. The commit-lock re-verify still
+  guards the racing `put`: enumeration plus an unconditional `deleteMany` would not do, since a
+  `put` between the classifying read and the delete would remove a value newer than the cutoff; the
+  fallback re-reads its candidates under the lock and deletes only those still below it, and a
+  hydration that raced a pre-cutoff file is bounded because the entry it would install is itself
+  past retention.
   Either way it is an `Aquifer` member, so it queues on the interface-stance decision in the 1.0
   docket. *(S–M)*
 - [ ] **A Windows leg for the file store** — "JVM services" is a stated target and every CI job is
