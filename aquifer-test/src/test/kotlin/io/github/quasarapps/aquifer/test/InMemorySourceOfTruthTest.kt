@@ -250,10 +250,12 @@ class InMemorySourceOfTruthTest {
     fun `INFINITE latency parks an operation forever, not for a finite span`() = runTest {
         val store = store()
         store.latency = Duration.INFINITE
-        val op = backgroundScope.async { store.read("k") }
+        // Foreground async, deliberately: advanceUntilIdle would run any finite delay to completion,
+        // so it distinguishes awaitCancellation (no resume to schedule → still suspended) from a long
+        // finite delay (which would complete). A background op would stay suspended either way and
+        // prove nothing — advanceUntilIdle does not advance background-scope work.
+        val op = async { store.read("k") }
 
-        // A finite ~292-year delay would be run by advanceUntilIdle; awaitCancellation has no resume
-        // to schedule, so the operation is still suspended afterwards — the "never responds" contract.
         advanceUntilIdle()
         assertTrue(op.isActive, "the operation never completes on its own under INFINITE latency")
 
