@@ -73,6 +73,7 @@ body:
         - aquifer-persistence-sqldelight
         - aquifer-okhttp
         - aquifer-test
+        - aquifer-bom
     validations:
       required: true
 
