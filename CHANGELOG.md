@@ -18,9 +18,11 @@ versions may contain breaking changes.
   additive** overloads: the existing `batchFetcher { … }` and `conditionalBatchFetcher { … }`
   signatures are untouched, so ordinary calls (trailing-lambda or not) and binary linkage are
   unaffected, and with no cap the whole set still goes out as one call. The one source-level caveat
-  is Kotlin callable references: an unqualified `::batchFetcher` / `::conditionalBatchFetcher` with
-  no expected type becomes ambiguous between the two overloads and needs a type hint to disambiguate
-  — ordinary invocations never do, and the JVM descriptors are unchanged so linkage holds. Until now
+  is a Kotlin callable reference to `conditionalBatchFetcher`: it gains a second overload, so an
+  unqualified `::conditionalBatchFetcher` with no expected type becomes ambiguous and needs a type
+  hint. (`::batchFetcher` was already overloaded with the windowed form, so it is unaffected by this
+  change.) Ordinary invocations never need a hint, and the JVM descriptors are unchanged so linkage
+  holds. Until now
   `maxBatchSize` was reachable only on the windowed
   `batchFetcher(coalesceWindow, maxBatchSize)` overload; a non-coalescing store could not express
   a per-call cap at all.
