@@ -67,6 +67,31 @@ tasks.register("publishingModules") {
     doLast { paths.sorted().forEach(::println) }
 }
 
+// aquifer-bom's constraint list is maintained by hand (a java-platform can't derive it: plugins.withId
+// hasn't fired for the sibling modules when its script is evaluated). Capture what it constrains —
+// after its dependencies block has run — so verifyBomCoverage can prove it covers every publishing
+// module. Without this, adding an eighth publishing module and forgetting the BOM would under-constrain
+// it silently, surfacing only in a consumer's versionless resolve instead of in this build — the exact
+// staleness the release gate above was reworked to avoid.
+val bomConstraintPaths = mutableListOf<String>()
+project(":aquifer-bom").afterEvaluate {
+    configurations.getByName("api").dependencyConstraints.forEach { bomConstraintPaths += ":${it.name}" }
+}
+
+tasks.register("verifyBomCoverage") {
+    group = "verification"
+    description = "Fails if aquifer-bom omits a version constraint for any publishing module."
+    val expected = publishingModulePaths
+    val covered = bomConstraintPaths
+    doLast {
+        val missing = (expected.toSet() - covered.toSet() - ":aquifer-bom").sorted()
+        check(missing.isEmpty()) {
+            "aquifer-bom is missing version constraints for: ${missing.joinToString()}. " +
+                "Add api(project(\"<path>\")) for each in aquifer-bom/build.gradle.kts."
+        }
+    }
+}
+
 // Aggregated API docs for the published modules: ./gradlew dokkaGenerate
 dependencies {
     dokka(project(":aquifer-core"))

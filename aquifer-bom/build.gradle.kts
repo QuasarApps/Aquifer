@@ -25,6 +25,11 @@ dependencies {
     }
 }
 
+// The constraint list above is hand-maintained; verifyBomCoverage (root) fails the build if it omits
+// any publishing module, so it can't silently go stale the way the release gate's hardcoded list once
+// did. Wired into check so `./gradlew build` — what CI runs — enforces it.
+tasks.named("check") { dependsOn(rootProject.tasks.named("verifyBomCoverage")) }
+
 mavenPublishing {
     publishToMavenCentral()
     signAllPublications()

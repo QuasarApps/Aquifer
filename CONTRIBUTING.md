@@ -34,6 +34,10 @@ handles everything else.
 - **`aquifer-test` is a publishing module**, not an internal test fixture: `fakeAquifer`,
   `FakeClock`, and `settle()` are locked public API that downstream test suites will depend on,
   so changing their behaviour is a user-visible change like any other.
+- **Adding a publishing module means updating `aquifer-bom`.** A new module joins the release gate
+  automatically once it applies the publish plugin, but the BOM's constraint list is hand-maintained
+  (a `java-platform` can't derive it) — add an `api(project(":aquifer-whatever"))` constraint in
+  `aquifer-bom/build.gradle.kts`. `verifyBomCoverage` (run by `./gradlew build`) fails if you forget.
 - **Concurrency tests run separately.** `./gradlew :aquifer-core:lincheckTest` runs the
   Lincheck suite (the tests tagged `lincheck`). Model checking takes minutes, so those tests
   are excluded from `test` — and therefore from `check`/`build` — to keep `./gradlew build`
@@ -132,3 +136,9 @@ what `publishToMavenCentral` uploads. A new publishing module therefore joins th
 gate the moment it applies the plugin, with nothing to keep in sync by hand, and the workflow
 refuses to release if that list ever comes back empty rather than passing without checking
 anything.
+
+The one list a new publishing module must still be added to by hand is `aquifer-bom`'s constraints
+— a `java-platform` can't derive them — but that list is guarded rather than trusted: the
+`verifyBomCoverage` task (wired into `aquifer-bom`'s `check`, so `./gradlew build` runs it) fails
+the build if the BOM omits any publishing module, so it can't silently drift the way the old
+hardcoded gate list once did.

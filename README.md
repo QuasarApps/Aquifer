@@ -746,6 +746,7 @@ their order — this section deliberately does not restate it.
 | `aquifer-persistence-sqldelight` | SQLDelight `SourceOfTruth`: queryable, batched (`IN`-clause + transactions), and enumerable (disk-wide `invalidateWhere`). |
 | `aquifer-okhttp` | OkHttp conditional fetching: automatic `ETag`/`Last-Modified` revalidation, 304 → `NotModified`. |
 | `aquifer-test` | Test doubles for consumers (`testImplementation`): `fakeAquifer` with assertable fetch counts, `FakeClock`, `settle()`. |
+| `aquifer-bom` | Maven BOM (`java-platform`): supplies one version for every module above, so consumers import the platform once and declare the modules without versions. |
 | `sample` | Runnable CLI tour: the core loop (cold start, stale-while-revalidate, `put`, process death, reconnect) then single-flight dedup, `prefetch`, batching, 304s, negative caching, and the counters (`./gradlew :sample:run`). |
 
 ## License

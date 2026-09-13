@@ -46,8 +46,8 @@ and the version bump off `-SNAPSHOT`.
   gets sprung. Fold them in, re-date the heading, and leave `[Unreleased]` empty at the tag; the
   version gate cannot catch this, because the section exists. *(S)*
 - [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
-  published coordinates from a clean project, and confirm the snippet still lists all seven
-  published modules. *(S)*
+  published coordinates from a clean project, and confirm the snippet still lists all eight
+  published artifacts (seven modules + `aquifer-bom`). *(S)*
 - [x] **Publish an `aquifer-bom`** (shipped) — seven artifacts move together and, per the CHANGELOG header,
   pre-1.0 minors may break binary compatibility, so `aquifer-core` 0.2.0 next to `aquifer-compose`
   0.1.0 fails at link time rather than at compile time. A Maven BOM — a `java-platform` module
@@ -55,6 +55,11 @@ and the version bump off `-SNAPSHOT`.
   supplies one version for the modules declared without one (an ordinary, overridable BOM, not
   `enforcedPlatform`) and turns the install snippet into one version line. Cheapest right after
   the first release, while the coordinates are still being written down. *(S)*
+- [ ] **Extract a POM/publishing convention plugin** — the `mavenPublishing { pom { … } }` block
+  (`licenses`/`developers`/`scm`, ~25 lines) is now byte-identical across eight build files. A
+  `buildSrc` convention plugin (or a shared `configurePom()`) would collapse them to one source of
+  truth; the eighth copy landing with `aquifer-bom` is what tips it from tolerable to worth doing.
+  *(S)*
 - [x] **"Coming from Store5" migration guide** (shipped) — `docs/coming-from-store5.md`, linked from
   the README's comparison section. Written against Store5's current documentation rather than from
   memory, which turned up two things the planned mapping had wrong. First, this file's own shorthand
