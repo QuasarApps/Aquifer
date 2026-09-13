@@ -9,6 +9,14 @@ versions may contain breaking changes.
 
 ### Added
 
+- `InMemorySourceOfTruth` in `aquifer-test`: a published, documented `SourceOfTruth` backed by a
+  synchronized `LinkedHashMap`, so a consumer can drive the **real** engine against persistence
+  without touching disk. It implements the full SPI natively — including bulk `readAll`/`writeAll`/
+  `deleteMany` and enumerable, non-null `keys()`/`keysWhere()` (so `invalidateWhere` is disk-wide) —
+  and exposes an `entries` snapshot for assertions. Its `latency` (a virtual-time `delay` before
+  every operation) and `failWith` (throw from every operation) knobs, settable at construction and
+  between calls, inject slow or failing persistence so the engine's timing and failing-store paths
+  (e.g. a propagating write failure, `onPersistenceWriteFailed`) are reachable deterministically.
 - `revalidateActive(force = true)` refreshes **every** active key regardless of staleness — the
   pull-to-refresh gesture, where the user is overriding the freshness bars the app chose for itself.
   Fetches are still shared per key and epoch-fenced, and `CacheOnly`-only keys are still not active.

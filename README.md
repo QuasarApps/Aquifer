@@ -626,6 +626,13 @@ silent shed) they reach active `CacheOnly` collectors and don't keep LRU recency
 staleness, single-flight, or shed-around-stream behavior, test against the real store paired with
 `FakeClock`.
 
+To go the other way — drive the **real** engine against persistence without touching disk —
+`aquifer-test` also ships `InMemorySourceOfTruth`, a documented, enumerable `SourceOfTruth` backed
+by a synchronized map. Hand it to `persistence(...)` to exercise the store's hydration, write-through
+and bulk/enumeration paths, then assert on its `entries`. Its `latency` and `failWith` knobs
+(settable at construction and between calls) inject slow or failing persistence — under `runTest`'s
+virtual time — so the engine's timing and failing-store paths are reachable deterministically.
+
 ## Design notes
 
 - **Single-flight fetches.** A per-key registry of in-flight `Deferred`s collapses concurrent
@@ -730,7 +737,7 @@ their order — this section deliberately does not restate it.
 | `aquifer-persistence-file` | JSON-files `SourceOfTruth` backed by kotlinx.serialization: atomic writes, self-healing reads. |
 | `aquifer-persistence-sqldelight` | SQLDelight `SourceOfTruth`: queryable, batched (`IN`-clause + transactions), and enumerable (disk-wide `invalidateWhere`). |
 | `aquifer-okhttp` | OkHttp conditional fetching: automatic `ETag`/`Last-Modified` revalidation, 304 → `NotModified`. |
-| `aquifer-test` | Test doubles for consumers (`testImplementation`): `fakeAquifer` with assertable fetch counts, `FakeClock`, `settle()`. |
+| `aquifer-test` | Test doubles for consumers (`testImplementation`): `fakeAquifer` with assertable fetch counts, `FakeClock`, `settle()`, and `InMemorySourceOfTruth` (a disk-free persistence fixture with latency/failure injection). |
 | `sample` | Runnable CLI tour: the core loop (cold start, stale-while-revalidate, `put`, process death, reconnect) then single-flight dedup, `prefetch`, batching, 304s, negative caching, and the counters (`./gradlew :sample:run`). |
 
 ## License
