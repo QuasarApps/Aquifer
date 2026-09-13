@@ -4,9 +4,9 @@ import io.github.quasarapps.aquifer.PersistedEntry
 import io.github.quasarapps.aquifer.SourceOfTruth
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.Volatile
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.nanoseconds
 
 /**
  * An in-memory [SourceOfTruth] for tests that need to exercise the real engine's **persistence**
@@ -85,35 +85,26 @@ public class InMemorySourceOfTruth<K : Any, V : Any>(
     private val monitor = Any()
     private val storage = LinkedHashMap<K, PersistedEntry<V>>()
 
-    // Nanoseconds behind the Duration accessor: a value class does not take @Volatile cleanly, and
-    // the knob must publish across threads (the class KDoc promises overlapping calls see it). A
-    // separate infinite bit is the sentinel — not Long.MAX_VALUE, which a large-but-finite Duration
-    // also saturates to, so overloading it would make such a latency read back (and park) as infinite.
-    @Volatile
-    private var latencyNanos: Long = 0L
-
-    @Volatile
-    private var latencyInfinite: Boolean = false
+    // An AtomicReference, not a @Volatile field: Duration is a value class that does not take
+    // @Volatile cleanly, yet the knob must publish across threads (the class KDoc promises overlapping
+    // calls see it) as one slot — so a reader never sees a torn pair, and INFINITE is its own sentinel
+    // rather than a Long that a large finite Duration could also produce.
+    private val latencyRef = AtomicReference(Duration.ZERO)
 
     /**
      * A [delay] of this duration is issued at the start of every operation when positive, so a test
      * can model slow persistence under `runTest`'s virtual time. Must be non-negative (both here and
      * at construction). Default: [Duration.ZERO], i.e. no delay. Does not affect [entries].
      *
-     * Stored at nanosecond precision behind the scenes, so a value finer than a nanosecond is
-     * truncated on read-back and one beyond ~292 years saturates to that ceiling — but a finite
-     * latency, however large, still completes once virtual time reaches it. Only [Duration.INFINITE]
-     * parks every operation forever (the "storage never responds" knob) and is the one value read
-     * back as `INFINITE`.
+     * The value is stored verbatim, so it round-trips exactly. A finite latency, however large,
+     * elapses once virtual time reaches it; only [Duration.INFINITE] parks every operation forever
+     * (the "storage never responds" knob, backed by [awaitCancellation]).
      */
     public var latency: Duration
-        get() = if (latencyInfinite) Duration.INFINITE else latencyNanos.nanoseconds
+        get() = latencyRef.get()
         set(value) {
             require(value >= Duration.ZERO) { "latency must be non-negative, was $value" }
-            // The infinite bit, not the saturated nanos, is what marks "never responds": a finite
-            // value past the ~292-year nanos ceiling saturates too, but must still delay (and complete).
-            latencyInfinite = value == Duration.INFINITE
-            latencyNanos = value.inWholeNanoseconds
+            latencyRef.set(value)
         }
 
     /**
@@ -151,8 +142,8 @@ public class InMemorySourceOfTruth<K : Any, V : Any>(
         get() = synchronized(monitor) { LinkedHashMap(storage) }
 
     init {
-        // Route the constructor value through the setter so its non-negative check and nanos
-        // conversion run — a property initializer would bypass the custom setter.
+        // Route the constructor value through the setter so its non-negative check runs — a property
+        // initializer would bypass the custom setter.
         this.latency = latency
     }
 
@@ -161,12 +152,13 @@ public class InMemorySourceOfTruth<K : Any, V : Any>(
 
     /** Applies the injected [latency] delay then the direction's injected failure, in that order. */
     private suspend fun gate(access: Access) {
+        val wait = latencyRef.get()
         when {
             // INFINITE means "never responds": suspend until cancelled, not delay(...), which is
             // always a finite park a virtual-time jump would blow past — completing the op the caller
             // meant to hang forever. A finite latency, however large, still completes.
-            latencyInfinite -> awaitCancellation()
-            latencyNanos > 0L -> delay(latencyNanos.nanoseconds)
+            wait == Duration.INFINITE -> awaitCancellation()
+            wait > Duration.ZERO -> delay(wait)
         }
         val failure = when (access) {
             Access.Read -> failReadsWith ?: failWith
