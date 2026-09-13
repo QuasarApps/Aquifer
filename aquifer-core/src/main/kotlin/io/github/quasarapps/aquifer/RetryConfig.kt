@@ -96,8 +96,11 @@ public class RetryConfig internal constructor() {
      * `delayFor` → the failure's [RetryAfterHint] → the computed exponential schedule — so an app
      * can override even a server-sent `Retry-After`, or supply one for a transport that carries the
      * header some other way. A returned delay **replaces** the computed backoff and is *not* capped
-     * by [maxDelay]; a non-positive delay retries immediately, and a value over [maxRetryAfter] (or
-     * non-finite) surfaces the failure instead of parking the key, exactly as for a [RetryAfterHint].
+     * by [maxDelay]; a non-positive delay retries immediately. The [maxRetryAfter] ceiling that
+     * bounds an untrusted `Retry-After` applies here too, on purpose (an override can carry a bug):
+     * a returned wait longer than it — or non-finite — is treated as not-retryable and surfaces the
+     * failure. So if you deliberately return a long backoff from this hook, **raise [maxRetryAfter]
+     * to match**, or those attempts will silently not retry.
      *
      * This decides only *how long* to wait, never *whether* to retry: [retryOn] still gates that
      * and [maxAttempts] still bounds the count. An override that itself throws is treated as `null`
