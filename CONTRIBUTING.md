@@ -133,9 +133,9 @@ than ship silently.
 That gate takes the modules it checks from the root `publishingModules` task, which lists every
 subproject applying the `com.vanniktech.maven.publish` plugin — the same condition that decides
 what `publishToMavenCentral` uploads. A new publishing module therefore joins the
-gate the moment it applies the plugin, with nothing to keep in sync by hand, and the workflow
-refuses to release if that list ever comes back empty rather than passing without checking
-anything.
+gate the moment it applies the plugin, with nothing to keep the gate itself in sync by hand, and
+the workflow refuses to release if that list ever comes back empty rather than passing without
+checking anything.
 
 The one list a new publishing module must still be added to by hand is `aquifer-bom`'s constraints
 — a `java-platform` can't derive them — but that list is guarded rather than trusted: the

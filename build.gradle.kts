@@ -75,19 +75,33 @@ tasks.register("publishingModules") {
 // staleness the release gate above was reworked to avoid.
 val bomConstraintPaths = mutableListOf<String>()
 project(":aquifer-bom").afterEvaluate {
+    // ":${it.name}" reconstructs the project path from the constraint's artifact name; this holds
+    // only because every module is top-level (path == ":" + name). A nested module (say
+    // ":integrations:aquifer-foo", name "aquifer-foo") would mismatch — revisit this if one is added.
     configurations.getByName("api").dependencyConstraints.forEach { bomConstraintPaths += ":${it.name}" }
 }
 
 tasks.register("verifyBomCoverage") {
     group = "verification"
-    description = "Fails if aquifer-bom omits a version constraint for any publishing module."
+    description = "Fails if aquifer-bom's constraints and the publishing modules disagree either way."
     val expected = publishingModulePaths
     val covered = bomConstraintPaths
     doLast {
-        val missing = (expected.toSet() - covered.toSet() - ":aquifer-bom").sorted()
+        val expectedSet = expected.toSet()
+        val coveredSet = covered.toSet()
+        // Under-coverage: a publishing module the BOM forgot — a consumer's versionless declaration
+        // of it then fails to resolve, with no clue the BOM was meant to cover it.
+        val missing = (expectedSet - coveredSet - ":aquifer-bom").sorted()
         check(missing.isEmpty()) {
             "aquifer-bom is missing version constraints for: ${missing.joinToString()}. " +
                 "Add api(project(\"<path>\")) for each in aquifer-bom/build.gradle.kts."
+        }
+        // Over-coverage: the BOM constrains something never published, so a versionless declaration
+        // of it resolves to a version that does not exist on Maven Central.
+        val extra = (coveredSet - expectedSet).sorted()
+        check(extra.isEmpty()) {
+            "aquifer-bom constrains non-publishing module(s): ${extra.joinToString()}. " +
+                "Remove the api(project(...)) constraint, or make the module publish."
         }
     }
 }
