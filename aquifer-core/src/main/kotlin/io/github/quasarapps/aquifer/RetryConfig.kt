@@ -20,7 +20,9 @@ import kotlin.time.Duration.Companion.seconds
  *
  * Delays grow exponentially — `initialDelay`, then `initialDelay * multiplier`, and so on —
  * capped at [maxDelay]. [jitter] then randomly *shortens* each delay by up to that fraction,
- * de-synchronising clients that fail in lockstep without ever exceeding the configured cap.
+ * de-synchronising clients that fail in lockstep without ever exceeding the configured cap. That
+ * describes the *computed* schedule only: a [delayFor] override or a failure's [RetryAfterHint]
+ * replaces the computed delay for an attempt and is **not** capped by [maxDelay] (see [delayFor]).
  *
  * Retrying happens inside the shared single-flight fetch: observers see one `Loading` state
  * for the whole cycle and one `Failure` if every attempt fails. Individual attempts are
@@ -48,7 +50,11 @@ public class RetryConfig internal constructor() {
             field = value
         }
 
-    /** Upper bound for any single delay. Must be positive and finite. Defaults to 30 s. */
+    /**
+     * Upper bound for any single *computed backoff* delay. Must be positive and finite. Defaults to
+     * 30 s. The override paths — a failure's [RetryAfterHint] and [delayFor] — deliberately bypass
+     * this cap, so a server- or app-stated wait is honoured in full.
+     */
     public var maxDelay: Duration = 30.seconds
         set(value) {
             require(value.isPositive() && value.isFinite()) {
@@ -92,7 +98,10 @@ public class RetryConfig internal constructor() {
      *
      * This decides only *how long* to wait, never *whether* to retry: [retryOn] still gates that
      * and [maxAttempts] still bounds the count. An override that itself throws is treated as `null`
-     * (defer). Defaults to always deferring, so behaviour is unchanged unless set.
+     * (defer). Like [retryOn], it is shared across keys and may be invoked **concurrently** for
+     * different keys retrying at once, so it must be safe for concurrent use — keep it pure, or
+     * synchronise any state it touches. Defaults to always deferring, so behaviour is unchanged
+     * unless set.
      */
     public var delayFor: (throwable: Throwable, attempt: Int) -> Duration? = { _, _ -> null }
 }

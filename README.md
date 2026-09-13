@@ -425,8 +425,9 @@ Retries happen *inside* the shared single-flight fetch: observers see one `Loadi
 terminal state per cycle, and jitter only ever shortens delays so `maxDelay` is a hard cap.
 
 A server can also say *when* to come back. If a failure implements the `RetryAfterHint` interface —
-as `aquifer-okhttp`'s `HttpException` does once it parses a `Retry-After` header — the retry loop
-honours that wait instead of the computed backoff for that attempt, and, unlike the schedule, it is
+which `aquifer-okhttp`'s `HttpException` will once its `Retry-After` parser lands (a separate
+follow-up; today you supply the hint from your own transport, or use `delayFor` below) — the retry
+loop honours that wait instead of the computed backoff for that attempt, and, unlike the schedule, it is
 **not** capped by `maxDelay` (obeying the server's stated wait is the point). To set the wait
 yourself — or to supply one for a transport that carries the header some other way — use
 `retry { delayFor = { throwable, attempt -> … } }`, which sits above the hint. The precedence is
