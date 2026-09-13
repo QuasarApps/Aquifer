@@ -41,10 +41,12 @@ import kotlin.time.Duration
  * preserved** (both [entries] and [keys] enumerate in first-write order — re-writing an existing
  * key keeps its original position) and the store is **safe under concurrent use**: the
  * [SourceOfTruth] contract permits overlapping calls from arbitrary threads, every touch of the
- * backing map is `synchronized`, and the injection knobs ([latency], [failWith], [failReadsWith],
- * [failWritesWith]) are `@Volatile`, so a value one thread assigns is visible to an operation
- * already in flight on another. [entries] returns a defensive copy taken under the monitor, so a
- * snapshot is stable even while other coroutines mutate the store.
+ * backing map is `synchronized`, and every injection knob is safely published — [failWith],
+ * [failReadsWith] and [failWritesWith] are `@Volatile`, and [latency] lives in an `AtomicReference`
+ * (a value class does not take `@Volatile` cleanly, and one slot means a reader never sees a torn
+ * pair) — so a value one thread assigns is visible to an operation already in flight on another.
+ * [entries] returns a defensive copy taken under the monitor, so a snapshot is stable even while
+ * other coroutines mutate the store.
  *
  * ### Enumerable
  *

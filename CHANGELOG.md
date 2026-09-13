@@ -17,9 +17,9 @@ versions may contain breaking changes.
   virtual-time `delay` before every operation) and failure knobs — `failWith` (throw from every
   operation), or the direction-specific `failReadsWith`/`failWritesWith` for the "reads fail" and the
   common "writes fail, reads still hydrate" cases — are settable at construction and between calls,
-  all `@Volatile`, and inject slow or failing persistence so the engine's timing and failing-store
-  paths (e.g. a propagating write failure, `onPersistenceWriteFailed`) are reachable
-  deterministically.
+  each safely published across threads, and inject slow or failing persistence so the engine's
+  timing and failing-store paths (e.g. a propagating write failure, `onPersistenceWriteFailed`) are
+  reachable deterministically.
 
 - `batchFetcher(maxBatchSize) { … }` and `conditionalBatchFetcher(maxBatchSize) { … }` overloads
   that cap how many keys go in one backend call. A key set larger than the cap is split into
