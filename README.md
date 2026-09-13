@@ -51,6 +51,21 @@ if (state.isLoading) RefreshIndicator()
 >     testImplementation("io.github.quasarapps:aquifer-test:0.1.0")          // fakeAquifer, FakeClock, settle()
 > }
 > ```
+>
+> **Bill of materials.** Import `aquifer-bom` and declare the Aquifer modules **without** versions —
+> the BOM supplies one version for all of them, so you bump them together rather than by hand. Like
+> any Maven BOM these are defaults for versionless declarations, not a lock: an explicit version on
+> a module still wins, so keep them omitted to stay aligned.
+>
+> ```kotlin
+> dependencies {
+>     implementation(platform("io.github.quasarapps:aquifer-bom:0.1.0"))
+>
+>     implementation("io.github.quasarapps:aquifer-core")
+>     implementation("io.github.quasarapps:aquifer-compose")
+>     testImplementation("io.github.quasarapps:aquifer-test")
+> }
+> ```
 
 ## Why Aquifer?
 
@@ -731,6 +746,7 @@ their order — this section deliberately does not restate it.
 | `aquifer-persistence-sqldelight` | SQLDelight `SourceOfTruth`: queryable, batched (`IN`-clause + transactions), and enumerable (disk-wide `invalidateWhere`). |
 | `aquifer-okhttp` | OkHttp conditional fetching: automatic `ETag`/`Last-Modified` revalidation, 304 → `NotModified`. |
 | `aquifer-test` | Test doubles for consumers (`testImplementation`): `fakeAquifer` with assertable fetch counts, `FakeClock`, `settle()`. |
+| `aquifer-bom` | Maven BOM (`java-platform`): supplies one version for every module above, so consumers import the platform once and declare the modules without versions. |
 | `sample` | Runnable CLI tour: the core loop (cold start, stale-while-revalidate, `put`, process death, reconnect) then single-flight dedup, `prefetch`, batching, 304s, negative caching, and the counters (`./gradlew :sample:run`). |
 
 ## License
