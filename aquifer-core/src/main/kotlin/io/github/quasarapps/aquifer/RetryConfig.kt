@@ -102,8 +102,10 @@ public class RetryConfig internal constructor() {
      * failure. So if you deliberately return a long backoff from this hook, **raise [maxRetryAfter]
      * to match**, or those attempts will silently not retry.
      *
-     * This decides only *how long* to wait, never *whether* to retry: [retryOn] still gates that
-     * and [maxAttempts] still bounds the count. An override that itself throws is treated as `null`
+     * This decides only *how long* to wait, not *whether* to retry — [retryOn] gates that and
+     * [maxAttempts] bounds the count — except that a returned wait the [maxRetryAfter] ceiling
+     * rejects (above) ends the retry cycle even when [retryOn] would allow it. An override that
+     * itself throws is treated as `null`
      * (defer). Like [retryOn], it is shared across keys and may be invoked **concurrently** for
      * different keys retrying at once, so it must be safe for concurrent use — keep it pure, or
      * synchronise any state it touches. Defaults to always deferring, so behaviour is unchanged

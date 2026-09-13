@@ -13,8 +13,9 @@ import kotlin.time.Duration
  * `aquifer-core` has no HTTP types, so a transport that speaks `Retry-After` (the `aquifer-okhttp`
  * helpers, say) implements this on the exception it throws, and the engine consults it on every
  * failure it is about to back off from — without depending on the transport. The hint changes only
- * *how long* to wait, never *whether* to retry: [RetryConfig.retryOn] still gates that and
- * [RetryConfig.maxAttempts] still bounds the count.
+ * *how long* to wait, not *whether* to retry — [RetryConfig.retryOn] gates that and
+ * [RetryConfig.maxAttempts] bounds the count — with one exception: a hint the ceiling below rejects
+ * ends the retry cycle even when [RetryConfig.retryOn] would allow it.
  *
  * Because a `Retry-After` is advice from an untrusted origin, the honoured wait is bounded by
  * [RetryConfig.maxRetryAfter]: a [retryAfter] longer than that ceiling — or non-finite — is treated

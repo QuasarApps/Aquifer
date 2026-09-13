@@ -447,8 +447,9 @@ loop honours that wait instead of the computed backoff for that attempt, and, un
 yourself — or to supply one for a transport that carries the header some other way — use
 `retry { delayFor = { throwable, attempt -> … } }`, which sits above the hint. The precedence is
 `delayFor` → the failure's `RetryAfterHint` → the computed schedule, and the first non-`null` wins.
-Both decide only *how long* to wait: `retryOn` still decides *whether* to retry, and
-`onFetchRetried` reports whichever delay won.
+Both decide only *how long* to wait — `retryOn` decides *whether* to retry — with one exception: a
+wait rejected by `maxRetryAfter` (below) ends the retry cycle regardless. `onFetchRetried` reports
+whichever delay won.
 
 Because a `Retry-After` is advice from an untrusted origin, a stated wait is bounded by
 `maxRetryAfter` (default 5 minutes): a longer — or non-finite — wait is treated as *not retryable*,

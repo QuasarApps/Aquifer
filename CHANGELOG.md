@@ -15,11 +15,12 @@ versions may contain breaking changes.
   a `429`/`503` `Retry-After` into the engine, which has no HTTP types of its own. A new
   `retry { delayFor = { throwable, attempt -> … } }` hook is the manual override, sitting above the
   hint: the delay precedence is `delayFor` → the failure's `RetryAfterHint` → the computed schedule,
-  and the first non-`null` wins. Both affect only *how long* to wait, never *whether* to retry
-  (`retryOn`) or how many times (`maxAttempts`); `onFetchRetried` reports whichever delay won. A
-  stated wait is untrusted advice, so it is bounded by a new `retry { maxRetryAfter }` (default 5
-  minutes): a longer or non-finite wait is treated as not-retryable — the failure surfaces rather
-  than parking the key — and a negative one floors to zero. Purely additive — a store that sets
+  and the first non-`null` wins. They affect only *how long* to wait, not *whether* to retry
+  (`retryOn`) or how many times (`maxAttempts`) — except that a wait the ceiling below rejects ends
+  the cycle; `onFetchRetried` reports whichever delay won. A stated wait is untrusted advice, so it
+  is bounded by a new `retry { maxRetryAfter }` (default 5 minutes): a longer or non-finite wait is
+  treated as not-retryable — the failure surfaces rather than parking the key, ending the retry cycle
+  even when `retryOn` would allow it — and a negative one floors to zero. Purely additive — a store that sets
   neither override behaves exactly as before. (The `aquifer-okhttp` parser that reads the
   `Retry-After` header onto `HttpException` is a separate follow-up.)
 
