@@ -10,20 +10,27 @@ import org.junit.jupiter.api.Tag
 import kotlin.test.Test
 
 /**
- * Lincheck linearizability check of [BoundedLruMap] (the structure backing the bounded negative
- * cache): all access is guarded by one monitor, so concurrent `get`/`put`/`remove`/`clear` must be
- * linearizable to some sequential order. A large `maxEntries` keeps eviction out of this check, so
- * the sequential specification is a plain map that Lincheck derives from sequential execution.
- * [BoundedLruMapEvictionLincheckTest] is the companion that turns eviction on, where `get`'s
- * access-order reorder becomes observable through `keys()`.
+ * Lincheck linearizability check of [BoundedLruMap] **with eviction in play** — the companion to
+ * [BoundedLruMapLincheckTest]'s plain-map (no-eviction) check. Here `maxEntries = 2` with keys `1:3`
+ * forces LRU eviction, so *which* keys survive depends on access recency, and [BoundedLruMap.keys]
+ * observes the surviving set. Because [BoundedLruMap.get] counts as use (it reorders the
+ * access-order map) this makes `get`'s side effect observable: the sequential specification Lincheck
+ * derives is the LRU-with-eviction behaviour, and an unsynchronised access-order read racing a
+ * structural write would corrupt the eviction order into a result that matches no sequential order.
+ * This is the coverage the no-eviction check cannot reach — there, `get`'s reorder is invisible to
+ * value lookups.
+ *
+ * The structure mirrors [MemoryCacheEvictionLincheckTest], which pins the same property for
+ * [MemoryCache]'s access-ordered map; [BoundedLruMap] backs the bounded negative cache and shares
+ * the `LinkedHashMap(accessOrder = true)` + `removeEldestEntry` shape, so it needs the same check.
  *
  * Tagged `lincheck` so it runs only in the dedicated `lincheckTest` task, not `check`/`build`.
  */
 @Tag("lincheck")
 @Param(name = "key", gen = IntGen::class, conf = "1:3")
-class BoundedLruMapLincheckTest {
+class BoundedLruMapEvictionLincheckTest {
 
-    private val map = BoundedLruMap<Int, Int>(maxEntries = 10)
+    private val map = BoundedLruMap<Int, Int>(maxEntries = 2)
 
     @Operation
     fun put(@Param(name = "key") key: Int, value: Int) = map.put(key, value)
@@ -33,6 +40,9 @@ class BoundedLruMapLincheckTest {
 
     @Operation
     fun remove(@Param(name = "key") key: Int) = map.remove(key)
+
+    @Operation
+    fun keys(): Set<Int> = map.keys()
 
     @Operation
     fun clear() = map.clear()
