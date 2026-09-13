@@ -452,6 +452,9 @@ class BatchFetchingTest {
         settle()
         assertEquals(3, batches.size, "the cap bounds the fire-and-forget path, not just getAll")
         assertTrue(batches.all { it.size <= 2 }, "no chunk exceeds maxBatchSize")
+        // The chunked results actually reached the cache: a later CacheOnly read hits, no new fetch.
+        assertEquals(5, store.get("eeeee", Freshness.CacheOnly))
+        assertEquals(3, batches.size, "the CacheOnly read did not add a batch-of-one call")
     }
 
     @Test

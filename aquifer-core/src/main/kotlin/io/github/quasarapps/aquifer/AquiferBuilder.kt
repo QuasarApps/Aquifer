@@ -117,8 +117,11 @@ public class AquiferBuilder<K : Any, V : Any> internal constructor() {
      * and a failing chunk fails only its own keys. Because the chunks are serial, their [retry]
      * cycles are too: against a flaky backend a many-chunk read takes up to N × (attempts +
      * backoff) to ultimately fail, where one unbounded call would have failed once — the cost of
-     * not stampeding a backend that limits concurrency alongside request size. Everything else
-     * matches the plain [batchFetcher]; to combine coalescing with a cap, use the
+     * not stampeding a backend that limits concurrency alongside request size. For the same reason
+     * the chunks are head-of-line blocked: a call that *hangs* (not just one that fails) stalls
+     * every later chunk until it returns, and with no store-level fetch timeout one wedged call
+     * holds up the whole read — so a fetcher with a cap set should carry its own request timeout.
+     * Everything else matches the plain [batchFetcher]; to combine coalescing with a cap, use the
      * [coalesceWindow][batchFetcher] overload instead.
      *
      * @param maxBatchSize the largest number of keys sent in one [fetch] call; must be ≥ 1.
