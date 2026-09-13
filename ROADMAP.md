@@ -287,11 +287,15 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   one is locked. The wiring has to cross the module boundary by itself, because `aquifer-core`
   cannot see `HttpException`: add a one-property core interface, `RetryAfterHint { val retryAfter:
   Duration? }`, that `HttpException` implements, and have the retry loop consult it on every
-  failure it is about to back off from — the hint replaces the computed delay outright
-  (`maxDelay` does not cap it; the server's instruction is the point), `retryOn` still decides
-  *whether* to retry, and `onFetchRetried` reports the delay actually used. `RetryConfig` also gains
+  failure it is about to back off from. `RetryConfig` also gains
   `delayFor: (Throwable, attempt: Int) -> Duration?` as the manual override for a transport that
-  carries the header some other way, `null` meaning "use the schedule". Whether it also seeds the
+  carries the header some other way. Both can answer for one failure, so the precedence is fixed
+  and single: **`delayFor` (manual override) → `RetryAfterHint` (transport hint) → the computed
+  exponential schedule** — the retry loop takes the first that returns non-`null`, `null` at either
+  hook meaning "defer to the next". A server instruction replaces the computed delay outright
+  (`maxDelay` does not cap it; obeying `Retry-After` is the point), while `delayFor` sits above it
+  so an app can still override even that; `retryOn` independently decides *whether* to retry at all,
+  and `onFetchRetried` reports whichever delay won. Whether it also seeds the
   negative-cache window is a second decision: a server-declared
   30 s suppression is exactly what that window is for, but the streak arithmetic should not
   multiply it. *(S)*
@@ -968,9 +972,10 @@ the existing fencing and single-flight guarantees.
     now and neither is later.
   - **The `Aquifer` interface's implementation stance.** 19 members, every one abstract, no default
     bodies — and `aquifer-test` exposes `FakeAquifer` as public API, which implements it. So every member
-    added after 1.0 breaks every third-party implementor, while two items on this roadmap (tag
-    invalidation and `getAllStates`) want new members — the key-scoped policy resolver does not,
-    since it lands as builder configuration. Pick one and
+    added after 1.0 breaks every third-party implementor, while four items on this roadmap want
+    new members — `peek` (0.2), `purgeExpired` (0.4), `getAllStates` (this docket) and tag
+    invalidation (0.6), the same four the additive-member bullet below enumerates; the key-scoped
+    policy resolver does not, since it lands as builder configuration. Pick one and
     write it down: default bodies on additive members, `@SubclassOptInRequired`, or "not intended
     for implementation outside this library" in the KDoc.
   - **`…All` vs `…Many`.** `getAll`/`putAll`/`prefetchAll`/`invalidateAll` sit beside
