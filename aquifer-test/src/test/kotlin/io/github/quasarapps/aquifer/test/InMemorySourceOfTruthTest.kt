@@ -16,6 +16,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.seconds
 
 class InMemorySourceOfTruthTest {
@@ -221,10 +222,27 @@ class InMemorySourceOfTruthTest {
         store.latency = 5.seconds
         assertEquals(5.seconds, store.latency)
 
-        // INFINITE saturates to Long.MAX_VALUE nanos; the getter maps that back rather than reading
-        // it as the ~292-year finite value the nanos would otherwise decode to.
+        // INFINITE is tracked by its own bit, so it reads back as INFINITE and is never confused
+        // with a large-but-finite value that saturates to the same nanos ceiling.
         store.latency = Duration.INFINITE
         assertEquals(Duration.INFINITE, store.latency)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class) // advanceUntilIdle
+    @Test
+    fun `a large finite latency completes and never reads back as INFINITE`() = runTest {
+        val store = store()
+        // ~1000 years is finite but past the ~292-year nanosecond ceiling, so its stored nanos
+        // saturate to the same Long.MAX_VALUE that INFINITE would. It must stay finite regardless:
+        // read back finite, and — unlike INFINITE's awaitCancellation — actually complete.
+        store.latency = (1_000 * 365).days
+        assertTrue(store.latency.isFinite(), "a finite latency must not read back as INFINITE")
+
+        // A foreground async so advanceUntilIdle drives the delay to completion (it does not advance
+        // background-scope-only work); a true INFINITE would awaitCancellation and never resume.
+        val op = async { store.read("k") }
+        advanceUntilIdle()
+        assertTrue(op.isCompleted, "a finite latency, however large, completes once time reaches it")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class) // advanceUntilIdle

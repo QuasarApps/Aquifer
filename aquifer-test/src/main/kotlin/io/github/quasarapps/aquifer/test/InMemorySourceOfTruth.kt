@@ -86,9 +86,14 @@ public class InMemorySourceOfTruth<K : Any, V : Any>(
     private val storage = LinkedHashMap<K, PersistedEntry<V>>()
 
     // Nanoseconds behind the Duration accessor: a value class does not take @Volatile cleanly, and
-    // the knob must publish across threads (the class KDoc promises overlapping calls see it).
+    // the knob must publish across threads (the class KDoc promises overlapping calls see it). A
+    // separate infinite bit is the sentinel — not Long.MAX_VALUE, which a large-but-finite Duration
+    // also saturates to, so overloading it would make such a latency read back (and park) as infinite.
     @Volatile
     private var latencyNanos: Long = 0L
+
+    @Volatile
+    private var latencyInfinite: Boolean = false
 
     /**
      * A [delay] of this duration is issued at the start of every operation when positive, so a test
@@ -96,15 +101,18 @@ public class InMemorySourceOfTruth<K : Any, V : Any>(
      * at construction). Default: [Duration.ZERO], i.e. no delay. Does not affect [entries].
      *
      * Stored at nanosecond precision behind the scenes, so a value finer than a nanosecond is
-     * truncated on read-back; [Duration.INFINITE] is preserved exactly (every operation then parks
-     * forever, the "storage never responds" knob).
+     * truncated on read-back and one beyond ~292 years saturates to that ceiling — but a finite
+     * latency, however large, still completes once virtual time reaches it. Only [Duration.INFINITE]
+     * parks every operation forever (the "storage never responds" knob) and is the one value read
+     * back as `INFINITE`.
      */
     public var latency: Duration
-        get() = if (latencyNanos == Long.MAX_VALUE) Duration.INFINITE else latencyNanos.nanoseconds
+        get() = if (latencyInfinite) Duration.INFINITE else latencyNanos.nanoseconds
         set(value) {
             require(value >= Duration.ZERO) { "latency must be non-negative, was $value" }
-            // INFINITE.inWholeNanoseconds already saturates to Long.MAX_VALUE, which the getter maps
-            // back to INFINITE; delay() treats that value as an effectively unbounded park.
+            // The infinite bit, not the saturated nanos, is what marks "never responds": a finite
+            // value past the ~292-year nanos ceiling saturates too, but must still delay (and complete).
+            latencyInfinite = value == Duration.INFINITE
             latencyNanos = value.inWholeNanoseconds
         }
 
@@ -153,13 +161,12 @@ public class InMemorySourceOfTruth<K : Any, V : Any>(
 
     /** Applies the injected [latency] delay then the direction's injected failure, in that order. */
     private suspend fun gate(access: Access) {
-        val waitNanos = latencyNanos
         when {
-            // INFINITE (stored as Long.MAX_VALUE) means "never responds": suspend until cancelled,
-            // not delay(Long.MAX_VALUE.nanoseconds), which is a ~292-year *finite* park a virtual-time
-            // jump would blow past — completing the op the caller meant to hang forever.
-            waitNanos == Long.MAX_VALUE -> awaitCancellation()
-            waitNanos > 0L -> delay(waitNanos.nanoseconds)
+            // INFINITE means "never responds": suspend until cancelled, not delay(...), which is
+            // always a finite park a virtual-time jump would blow past — completing the op the caller
+            // meant to hang forever. A finite latency, however large, still completes.
+            latencyInfinite -> awaitCancellation()
+            latencyNanos > 0L -> delay(latencyNanos.nanoseconds)
         }
         val failure = when (access) {
             Access.Read -> failReadsWith ?: failWith
