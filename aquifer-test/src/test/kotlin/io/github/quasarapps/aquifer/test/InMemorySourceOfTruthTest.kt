@@ -5,6 +5,8 @@ import io.github.quasarapps.aquifer.Freshness
 import io.github.quasarapps.aquifer.PersistedEntry
 import io.github.quasarapps.aquifer.aquifer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import java.io.IOException
 import kotlin.test.Test
@@ -223,6 +225,21 @@ class InMemorySourceOfTruthTest {
         // it as the ~292-year finite value the nanos would otherwise decode to.
         store.latency = Duration.INFINITE
         assertEquals(Duration.INFINITE, store.latency)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class) // advanceUntilIdle
+    @Test
+    fun `INFINITE latency parks an operation forever, not for a finite span`() = runTest {
+        val store = store()
+        store.latency = Duration.INFINITE
+        val op = backgroundScope.async { store.read("k") }
+
+        // A finite ~292-year delay would be run by advanceUntilIdle; awaitCancellation has no resume
+        // to schedule, so the operation is still suspended afterwards — the "never responds" contract.
+        advanceUntilIdle()
+        assertTrue(op.isActive, "the operation never completes on its own under INFINITE latency")
+
+        op.cancel()
     }
 
     // --- Driven through a real Aquifer: the fixture's whole point is exercising the engine's

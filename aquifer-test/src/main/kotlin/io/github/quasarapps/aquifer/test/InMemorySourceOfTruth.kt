@@ -2,6 +2,7 @@ package io.github.quasarapps.aquifer.test
 
 import io.github.quasarapps.aquifer.PersistedEntry
 import io.github.quasarapps.aquifer.SourceOfTruth
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlin.concurrent.Volatile
 import kotlin.time.Duration
@@ -26,9 +27,13 @@ import kotlin.time.Duration.Companion.nanoseconds
  * settle()
  * assertEquals(setOf("ada"), disk.entries.keys) // the fetch wrote through to persistence
  *
- * disk.failWritesWith = IOException("disk full") // now writes fail but reads still hydrate,
- * users.put("grace", grace)                      // exercising onPersistenceWriteFailed
+ * disk.failWritesWith = IOException("disk full") // writes now fail; reads still hydrate
+ * users.get("grace")                             // the fetch's write-through fails -> onPersistenceWriteFailed
  * ```
+ *
+ * (`onPersistenceWriteFailed` fires for the *best-effort write-through after a fetch*; a direct
+ * [put][io.github.quasarapps.aquifer.Aquifer.put] is all-or-nothing and propagates the failure
+ * instead, so the example fetches rather than writes.)
  *
  * ### Storage & threading
  *
@@ -149,7 +154,13 @@ public class InMemorySourceOfTruth<K : Any, V : Any>(
     /** Applies the injected [latency] delay then the direction's injected failure, in that order. */
     private suspend fun gate(access: Access) {
         val waitNanos = latencyNanos
-        if (waitNanos > 0L) delay(waitNanos.nanoseconds)
+        when {
+            // INFINITE (stored as Long.MAX_VALUE) means "never responds": suspend until cancelled,
+            // not delay(Long.MAX_VALUE.nanoseconds), which is a ~292-year *finite* park a virtual-time
+            // jump would blow past — completing the op the caller meant to hang forever.
+            waitNanos == Long.MAX_VALUE -> awaitCancellation()
+            waitNanos > 0L -> delay(waitNanos.nanoseconds)
+        }
         val failure = when (access) {
             Access.Read -> failReadsWith ?: failWith
             Access.Write -> failWritesWith ?: failWith
