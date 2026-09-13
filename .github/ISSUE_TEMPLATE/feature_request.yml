@@ -51,6 +51,7 @@ body:
         - aquifer-persistence-sqldelight
         - aquifer-okhttp
         - aquifer-test
+        - aquifer-bom
         - A new module
         - Not sure
     validations:
