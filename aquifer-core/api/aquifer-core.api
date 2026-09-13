@@ -307,6 +307,7 @@ public final class io/github/quasarapps/aquifer/RetryConfig {
 	public final fun getJitter ()D
 	public final fun getMaxAttempts ()I
 	public final fun getMaxDelay-UwyO8pc ()J
+	public final fun getMaxRetryAfter-UwyO8pc ()J
 	public final fun getMultiplier ()D
 	public final fun getRetryOn ()Lkotlin/jvm/functions/Function1;
 	public final fun setDelayFor (Lkotlin/jvm/functions/Function2;)V
@@ -314,6 +315,7 @@ public final class io/github/quasarapps/aquifer/RetryConfig {
 	public final fun setJitter (D)V
 	public final fun setMaxAttempts (I)V
 	public final fun setMaxDelay-LRDsOJo (J)V
+	public final fun setMaxRetryAfter-LRDsOJo (J)V
 	public final fun setMultiplier (D)V
 	public final fun setRetryOn (Lkotlin/jvm/functions/Function1;)V
 }

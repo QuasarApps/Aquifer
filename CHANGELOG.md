@@ -16,9 +16,12 @@ versions may contain breaking changes.
   `retry { delayFor = { throwable, attempt -> … } }` hook is the manual override, sitting above the
   hint: the delay precedence is `delayFor` → the failure's `RetryAfterHint` → the computed schedule,
   and the first non-`null` wins. Both affect only *how long* to wait, never *whether* to retry
-  (`retryOn`) or how many times (`maxAttempts`); `onFetchRetried` reports whichever delay won.
-  Purely additive — a store that sets neither behaves exactly as before. (The `aquifer-okhttp`
-  parser that reads the `Retry-After` header onto `HttpException` is a separate follow-up.)
+  (`retryOn`) or how many times (`maxAttempts`); `onFetchRetried` reports whichever delay won. A
+  stated wait is untrusted advice, so it is bounded by a new `retry { maxRetryAfter }` (default 5
+  minutes): a longer or non-finite wait is treated as not-retryable — the failure surfaces rather
+  than parking the key — and a negative one floors to zero. Purely additive — a store that sets
+  neither override behaves exactly as before. (The `aquifer-okhttp` parser that reads the
+  `Retry-After` header onto `HttpException` is a separate follow-up.)
 
 - `aquifer-bom` — a Maven BOM (`java-platform`) that supplies one version for all seven published
   Aquifer artifacts. Import the platform once (`implementation(platform("io.github.quasarapps:aquifer-bom:<version>"))`)

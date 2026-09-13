@@ -12,10 +12,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** A transport failure carrying a server `Retry-After`, for the [RetryAfterHint] precedence tests. */
 private class HintedFailure(override val retryAfter: Duration?) : IOException("busy"), RetryAfterHint
+
+/** A transport failure whose `Retry-After` accessor throws — e.g. a lazily-parsed malformed header. */
+private class ThrowingHintFailure : IOException("busy"), RetryAfterHint {
+    override val retryAfter: Duration get() = error("malformed Retry-After header")
+}
 
 class RetryTest {
 
@@ -366,5 +372,111 @@ class RetryTest {
         assertEquals("ok", store.get("k"))
         assertEquals(2, calls)
         assertEquals(5.seconds.inWholeMilliseconds, testScheduler.currentTime - startedAt)
+    }
+
+    @Test
+    fun `a stated wait over maxRetryAfter is not retryable`() {
+        val policy = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 30.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+            maxRetryAfter = 5.minutes,
+        )
+
+        // Over the ceiling -> give up, so the original failure surfaces now.
+        assertNull(policy.delayAfter(1, HintedFailure(6.minutes)))
+        // At the ceiling -> honoured.
+        assertEquals(5.minutes, policy.delayAfter(1, HintedFailure(5.minutes)))
+        // The ceiling applies to delayFor too.
+        val viaDelayFor = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 30.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+            maxRetryAfter = 1.minutes,
+            delayFor = { _, _ -> 2.minutes },
+        )
+        assertNull(viaDelayFor.delayAfter(1, IOException()))
+    }
+
+    @Test
+    fun `a non-finite RetryAfterHint is not retryable, so an INFINITE wait never wedges the key`() {
+        val policy = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 30.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+        )
+
+        assertNull(policy.delayAfter(1, HintedFailure(Duration.INFINITE)))
+    }
+
+    @Test
+    fun `a negative stated wait is floored to zero for the reported delay`() {
+        val policy = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 30.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+        )
+
+        // delay() coerces non-positive to zero already; flooring here keeps onFetchRetried honest.
+        assertEquals(Duration.ZERO, policy.delayAfter(1, HintedFailure((-5).seconds)))
+    }
+
+    @Test
+    fun `a throwing RetryAfterHint accessor defers to the schedule, not the caller`() {
+        val policy = RetryPolicy(
+            maxAttempts = 3,
+            initialDelay = 1.seconds,
+            maxDelay = 30.seconds,
+            multiplier = 2.0,
+            jitter = 0.0,
+            retryOn = { true },
+        )
+
+        // The malformed-header getter must not escape delayAfter and replace the original failure.
+        assertEquals(1.seconds, policy.delayAfter(1, ThrowingHintFailure()))
+    }
+
+    @Test
+    fun `an INFINITE Retry-After surfaces the failure instead of hanging the fetch`() = runTest {
+        var calls = 0
+        val store = aquifer<String, String> {
+            scope(backgroundScope)
+            fetcher {
+                calls++
+                throw HintedFailure(Duration.INFINITE)
+            }
+            retry { maxAttempts = 5 } // would retry, but the unbounded wait is refused, not honoured
+        }
+
+        assertFailsWith<IOException> { store.fresh("k") }
+        assertEquals(1, calls) // no retry, and — the point — no permanent park
+    }
+
+    @Test
+    fun `maxRetryAfter must be positive and finite`() {
+        assertFailsWith<IllegalArgumentException> {
+            aquifer<String, String> {
+                fetcher { "v" }
+                retry { maxRetryAfter = Duration.INFINITE }
+            }
+        }
+        assertFailsWith<IllegalArgumentException> {
+            aquifer<String, String> {
+                fetcher { "v" }
+                retry { maxRetryAfter = Duration.ZERO }
+            }
+        }
     }
 }

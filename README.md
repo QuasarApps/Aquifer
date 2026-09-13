@@ -450,6 +450,12 @@ yourself — or to supply one for a transport that carries the header some other
 Both decide only *how long* to wait: `retryOn` still decides *whether* to retry, and
 `onFetchRetried` reports whichever delay won.
 
+Because a `Retry-After` is advice from an untrusted origin, a stated wait is bounded by
+`maxRetryAfter` (default 5 minutes): a longer — or non-finite — wait is treated as *not retryable*,
+so the failure surfaces now rather than parking the fetch (and every stream collector of the key) on
+a hostile or misconfigured value. Raise `maxRetryAfter` to honour longer waits, or lower it to fail
+faster; it never caps the computed backoff (that's `maxDelay`).
+
 ### Conditional fetching (ETag / 304)
 
 When the backend supports HTTP revalidation, a stale entry doesn't need a re-download to
