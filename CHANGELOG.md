@@ -16,8 +16,12 @@ versions may contain breaking changes.
   it accepts, and a failing chunk fails only its own keys. The cap is honoured by every explicit
   multi-key read (`getAll`, `streamMany`, `prefetchAll`, `revalidateActive`). These are **purely
   additive** overloads: the existing `batchFetcher { … }` and `conditionalBatchFetcher { … }`
-  signatures are untouched, so recompilation and linkage are unaffected, and with no cap the whole
-  set still goes out as one call. Until now `maxBatchSize` was reachable only on the windowed
+  signatures are untouched, so ordinary calls (trailing-lambda or not) and binary linkage are
+  unaffected, and with no cap the whole set still goes out as one call. The one source-level caveat
+  is Kotlin callable references: an unqualified `::batchFetcher` / `::conditionalBatchFetcher` with
+  no expected type becomes ambiguous between the two overloads and needs a type hint to disambiguate
+  — ordinary invocations never do, and the JVM descriptors are unchanged so linkage holds. Until now
+  `maxBatchSize` was reachable only on the windowed
   `batchFetcher(coalesceWindow, maxBatchSize)` overload; a non-coalescing store could not express
   a per-call cap at all.
 
