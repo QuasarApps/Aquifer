@@ -68,7 +68,7 @@ class PutAllTest {
 
     @Test
     fun `putAll writes through to persistence`() = runTest {
-        val disk = InMemorySourceOfTruth<String, Int>()
+        val disk = NonEnumerableSourceOfTruth<String, Int>()
         val store = aquifer<String, Int> {
             scope(backgroundScope)
             persistence(disk)

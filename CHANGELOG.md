@@ -13,10 +13,14 @@ versions may contain breaking changes.
   synchronized `LinkedHashMap`, so a consumer can drive the **real** engine against persistence
   without touching disk. It implements the full SPI natively — including bulk `readAll`/`writeAll`/
   `deleteMany` and enumerable, non-null `keys()`/`keysWhere()` (so `invalidateWhere` is disk-wide) —
-  and exposes an `entries` snapshot for assertions. Its `latency` (a virtual-time `delay` before
-  every operation) and `failWith` (throw from every operation) knobs, settable at construction and
-  between calls, inject slow or failing persistence so the engine's timing and failing-store paths
-  (e.g. a propagating write failure, `onPersistenceWriteFailed`) are reachable deterministically.
+  and exposes an `entries` snapshot for assertions (in first-write order). Its `latency` (a
+  virtual-time `delay` before every operation) and failure knobs — `failWith` (throw from every
+  operation), or the direction-specific `failReadsWith`/`failWritesWith` for the "reads fail" and the
+  common "writes fail, reads still hydrate" cases — are settable at construction and between calls,
+  all `@Volatile`, and inject slow or failing persistence so the engine's timing and failing-store
+  paths (e.g. a propagating write failure, `onPersistenceWriteFailed`) are reachable
+  deterministically.
+
 - `revalidateActive(force = true)` refreshes **every** active key regardless of staleness — the
   pull-to-refresh gesture, where the user is overriding the freshness bars the app chose for itself.
   Fetches are still shared per key and epoch-fenced, and `CacheOnly`-only keys are still not active.

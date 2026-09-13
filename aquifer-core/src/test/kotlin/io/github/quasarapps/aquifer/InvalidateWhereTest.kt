@@ -86,7 +86,7 @@ class InvalidateWhereTest {
 
     @Test
     fun `invalidateWhere deletes persisted entries for matching keys and keeps the rest`() = runTest {
-        val disk = InMemorySourceOfTruth<String, Int>()
+        val disk = NonEnumerableSourceOfTruth<String, Int>()
         val store = aquifer<String, Int> {
             scope(backgroundScope)
             persistence(disk)
@@ -102,7 +102,7 @@ class InvalidateWhereTest {
 
     @Test
     fun `invalidateWhere reaches a persisted key already evicted from memory`() = runTest {
-        val disk = InMemorySourceOfTruth<String, Int>()
+        val disk = NonEnumerableSourceOfTruth<String, Int>()
         val store = aquifer<String, Int> {
             scope(backgroundScope)
             memoryCache { maxEntries = 1 }

@@ -52,19 +52,23 @@ public final class io/github/quasarapps/aquifer/test/FakeClock : io/github/quasa
 }
 
 public final class io/github/quasarapps/aquifer/test/InMemorySourceOfTruth : io/github/quasarapps/aquifer/SourceOfTruth {
-	public synthetic fun <init> (JLjava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (JLjava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JLjava/lang/Throwable;Ljava/lang/Throwable;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JLjava/lang/Throwable;Ljava/lang/Throwable;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun delete (Ljava/lang/Object;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun deleteAll (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun deleteMany (Ljava/util/Collection;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun getEntries ()Ljava/util/Map;
+	public final fun getFailReadsWith ()Ljava/lang/Throwable;
 	public final fun getFailWith ()Ljava/lang/Throwable;
+	public final fun getFailWritesWith ()Ljava/lang/Throwable;
 	public final fun getLatency-UwyO8pc ()J
 	public fun keys (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun keysWhere (Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun read (Ljava/lang/Object;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun readAll (Ljava/util/Collection;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun setFailReadsWith (Ljava/lang/Throwable;)V
 	public final fun setFailWith (Ljava/lang/Throwable;)V
+	public final fun setFailWritesWith (Ljava/lang/Throwable;)V
 	public final fun setLatency-LRDsOJo (J)V
 	public fun write (Ljava/lang/Object;Lio/github/quasarapps/aquifer/PersistedEntry;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun writeAll (Ljava/util/Map;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

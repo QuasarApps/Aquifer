@@ -629,9 +629,11 @@ staleness, single-flight, or shed-around-stream behavior, test against the real 
 To go the other way — drive the **real** engine against persistence without touching disk —
 `aquifer-test` also ships `InMemorySourceOfTruth`, a documented, enumerable `SourceOfTruth` backed
 by a synchronized map. Hand it to `persistence(...)` to exercise the store's hydration, write-through
-and bulk/enumeration paths, then assert on its `entries`. Its `latency` and `failWith` knobs
-(settable at construction and between calls) inject slow or failing persistence — under `runTest`'s
-virtual time — so the engine's timing and failing-store paths are reachable deterministically.
+and bulk/enumeration paths, then assert on its `entries`. Its `latency` and failure knobs — `failWith`
+for every operation, or `failReadsWith`/`failWritesWith` for the common "writes fail, reads still
+hydrate" case (settable at construction and between calls) — inject slow or failing persistence under
+`runTest`'s virtual time, so the engine's timing and failing-store paths are reachable
+deterministically.
 
 ## Design notes
 

@@ -80,7 +80,7 @@ class ConditionalFetchingTest {
 
     @Test
     fun `the validator survives persistence and process restarts`() = runTest {
-        val disk = InMemorySourceOfTruth<String, Int>()
+        val disk = NonEnumerableSourceOfTruth<String, Int>()
         val first = aquifer<String, Int> {
             scope(backgroundScope)
             persistence(disk)

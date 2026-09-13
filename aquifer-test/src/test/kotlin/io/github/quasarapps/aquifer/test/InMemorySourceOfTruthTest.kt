@@ -1,6 +1,9 @@
 package io.github.quasarapps.aquifer.test
 
+import io.github.quasarapps.aquifer.AquiferEvents
+import io.github.quasarapps.aquifer.Freshness
 import io.github.quasarapps.aquifer.PersistedEntry
+import io.github.quasarapps.aquifer.aquifer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import java.io.IOException
@@ -70,6 +73,19 @@ class InMemorySourceOfTruthTest {
 
         store.write("third", PersistedEntry(3, writtenAtMillis = 3))
         assertEquals(setOf("first", "second"), snapshot.keys) // the earlier snapshot is unaffected
+    }
+
+    @Test
+    fun `re-writing an existing key keeps its original position - first-write order`() = runTest {
+        val store = store()
+        store.write("a", PersistedEntry(1, writtenAtMillis = 1))
+        store.write("b", PersistedEntry(2, writtenAtMillis = 2))
+        store.write("a", PersistedEntry(10, writtenAtMillis = 3)) // re-write, not a fresh key
+
+        // LinkedHashMap does not move a key on re-put, so "a" stays first even though it was written last.
+        assertEquals(listOf("a", "b"), store.entries.keys.toList())
+        assertEquals(listOf("a", "b"), store.keys().toList())
+        assertEquals(10, store.read("a")?.value) // the value is updated in place
     }
 
     @Test
@@ -150,8 +166,133 @@ class InMemorySourceOfTruthTest {
     }
 
     @Test
+    fun `failWritesWith fails the mutations while reads still succeed`() = runTest {
+        val store = store()
+        store.write("seeded", PersistedEntry(1, writtenAtMillis = 1)) // before the knob is armed
+        val boom = IOException("writes down")
+        store.failWritesWith = boom
+
+        // Mutations throw...
+        assertSame(boom, assertFailsWith<IOException> { store.write("a", PersistedEntry(2, writtenAtMillis = 2)) })
+        assertSame(boom, assertFailsWith<IOException> { store.deleteMany(listOf("seeded")) })
+        // ...but reads still hydrate.
+        assertEquals(1, store.read("seeded")?.value)
+        assertEquals(setOf("seeded"), store.keys())
+    }
+
+    @Test
+    fun `failReadsWith fails the reads while writes still succeed`() = runTest {
+        val store = store()
+        val boom = IOException("reads down")
+        store.failReadsWith = boom
+
+        // Reads throw...
+        assertSame(boom, assertFailsWith<IOException> { store.read("a") })
+        assertSame(boom, assertFailsWith<IOException> { store.keys() })
+        // ...but a write still lands (verified via a defensive-copy snapshot, which no knob gates).
+        store.write("a", PersistedEntry(7, writtenAtMillis = 1))
+        assertEquals(7, store.entries["a"]?.value)
+    }
+
+    @Test
+    fun `a direction-specific knob takes precedence over failWith`() = runTest {
+        val store = store()
+        val all = IOException("everything down")
+        val writes = IOException("only writes down")
+        store.failWith = all
+        store.failWritesWith = writes
+
+        assertSame(writes, assertFailsWith<IOException> { store.write("a", PersistedEntry(1, writtenAtMillis = 1)) })
+        assertSame(all, assertFailsWith<IOException> { store.read("a") }) // reads fall back to failWith
+    }
+
+    @Test
     fun `a negative latency is rejected at construction and on assignment`() = runTest {
         assertFailsWith<IllegalArgumentException> { InMemorySourceOfTruth<String, Int>(latency = -(1.seconds)) }
         assertFailsWith<IllegalArgumentException> { store().latency = -(1.seconds) }
+    }
+
+    // --- Driven through a real Aquifer: the fixture's whole point is exercising the engine's
+    // --- persistence paths, so these poke it via the engine rather than as a bare map.
+
+    @Test
+    fun `a real Aquifer hydrates a memory miss from the fixture`() = runTest {
+        val disk = InMemorySourceOfTruth<String, Int>()
+        disk.write("k", PersistedEntry(value = 7, writtenAtMillis = 0))
+        var fetches = 0
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(FakeClock())
+            fetcher {
+                fetches++
+                -1
+            }
+            persistence(disk)
+        }
+
+        // CacheOnly never fetches, so the only path to a value is hydration from persistence.
+        assertEquals(7, store.get("k", Freshness.CacheOnly))
+        assertEquals(0, fetches, "the value came from the fixture, not the fetcher")
+    }
+
+    @Test
+    fun `a real Aquifer writes a fetched value through to the fixture`() = runTest {
+        val disk = InMemorySourceOfTruth<String, Int>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(FakeClock())
+            fetcher { it.length }
+            persistence(disk)
+        }
+
+        assertEquals(3, store.get("abc"))
+        settle() // the write-through lands on the store's scope
+        assertEquals(setOf("abc"), disk.entries.keys)
+        assertEquals(3, disk.read("abc")?.value)
+    }
+
+    @Test
+    fun `an enumerable fixture lets invalidateWhere reach a disk-only key`() = runTest {
+        val disk = InMemorySourceOfTruth<String, Int>()
+        // A key only persistence knows — never loaded into memory this run.
+        disk.write("tenant:gone", PersistedEntry(value = 1, writtenAtMillis = 0))
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(FakeClock())
+            fetcher { it.length }
+            persistence(disk)
+        }
+
+        store.invalidateWhere { it.startsWith("tenant:") }
+        settle()
+
+        // keysWhere let the sweep enumerate persistence and drop the disk-only match.
+        assertNull(disk.read("tenant:gone"))
+    }
+
+    @Test
+    fun `failWritesWith surfaces onPersistenceWriteFailed while reads still hydrate`() = runTest {
+        val disk = InMemorySourceOfTruth<String, Int>()
+        disk.write("cached", PersistedEntry(value = 1, writtenAtMillis = 0))
+        disk.failWritesWith = IOException("disk full")
+        val writeFailures = mutableListOf<String>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(FakeClock())
+            fetcher { it.length }
+            persistence(disk)
+            events(object : AquiferEvents<String> {
+                override fun onPersistenceWriteFailed(key: String, error: Throwable) {
+                    writeFailures += key
+                }
+            })
+        }
+
+        // Reads still hydrate despite failing writes...
+        assertEquals(1, store.get("cached", Freshness.CacheOnly))
+        // ...while a fetched value's best-effort write-through fails and is reported, not thrown.
+        assertEquals(5, store.get("fresh")) // "fresh".length, fetched then written through
+        settle()
+        assertEquals(listOf("fresh"), writeFailures)
     }
 }

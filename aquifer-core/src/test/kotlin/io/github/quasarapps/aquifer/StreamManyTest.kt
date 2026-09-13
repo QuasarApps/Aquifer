@@ -177,7 +177,7 @@ class StreamManyTest {
         // Writes are broadcast on the event bus, not stored in memory alone, so a stream
         // collector watching a key that was LRU-evicted still sees subsequent puts —
         // confirming the bus-based delivery, not memory-dependent observation.
-        val disk = InMemorySourceOfTruth<String, Int>()
+        val disk = NonEnumerableSourceOfTruth<String, Int>()
         val store = aquifer<String, Int> {
             scope(backgroundScope)
             memoryCache { maxEntries = 2 }
