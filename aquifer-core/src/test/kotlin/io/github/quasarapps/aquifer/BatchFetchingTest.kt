@@ -336,6 +336,28 @@ class BatchFetchingTest {
     }
 
     @Test
+    fun `closing the store mid-chunk stops dispatching the remaining chunks`() = runTest {
+        val seen = mutableListOf<Set<String>>()
+        lateinit var store: Aquifer<String, Int>
+        store = aquifer<String, Int> {
+            scope(backgroundScope)
+            // A synchronous fetcher gives the sequential dispatch loop no suspension point between
+            // chunks, so cancellation is only observed by the explicit ensureActive() check. Without
+            // it, closing the store during chunk 1 would still fire the four later chunk calls.
+            batchFetcher(maxBatchSize = 1) { keys ->
+                seen += keys
+                if (seen.size == 1) store.close() // cancel the store scope during the first chunk
+                keys.associateWith { it.length }
+            }
+        }
+
+        runCatching { store.getAll(linkedSetOf("a", "b", "c", "d", "e")) }
+        settle()
+
+        assertEquals(listOf(setOf("a")), seen, "no chunk dispatched after the store scope was cancelled")
+    }
+
+    @Test
     fun `getAll splits the fetch into maxBatchSize chunks`() = runTest {
         val batches = mutableListOf<Set<String>>()
         val store = aquifer<String, Int> {
