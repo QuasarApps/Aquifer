@@ -670,6 +670,10 @@ internal class RealAquifer<K : Any, V : Any>(
         scope.launch {
             for (chunk in pending) {
                 try {
+                    // Cancellation is cooperative: a chunk whose fetch returns without suspending
+                    // (a synchronous fetcher, or one that closes the store mid-call) would otherwise
+                    // let the loop issue every later chunk after the scope is already cancelled.
+                    ensureActive()
                     chunk.result.complete(fetchBatchWithRetry(chunk.keys, chunk.attempts))
                 } catch (cancellation: CancellationException) {
                     for (remaining in pending) remaining.result.cancel(cancellation)
