@@ -568,10 +568,11 @@ internal class RealAquifer<K : Any, V : Any>(
     }
 
     /**
-     * Fetches [keys] through one [batchFetcher] call (or independent single fetches when none
-     * is configured), reusing the per-key single-flight machinery via [startBatch], then awaits
-     * each. Returns only the keys that resolved; a key the batch omits, or whose fetch throws,
-     * is absent (its error has already surfaced through [AquiferEvents]).
+     * Fetches [keys] through the [batchFetcher] — one call per `maxBatchSize` chunk, dispatched
+     * sequentially (or independent single fetches when no batch fetcher is configured) — reusing
+     * the per-key single-flight machinery via [startBatch], then awaits each. Returns only the
+     * keys that resolved; a key the batch omits, or whose fetch throws, is absent (its error has
+     * already surfaced through [AquiferEvents]).
      */
     private suspend fun batchRefresh(keys: Set<K>): Map<K, V> {
         val deferreds = startBatch(keys)
@@ -594,31 +595,41 @@ internal class RealAquifer<K : Any, V : Any>(
     }
 
     /**
-     * Registers a single-flight fetch for each of [keys] and dispatches the one shared batch
-     * call — a [batchFetcher] or a [conditionalBatchFetcher] — (or independent single fetches
-     * when neither is configured), **without awaiting** — returning the per-key [Deferred]s.
-     * [getAll] (via [batchRefresh]) awaits them for its result map; the fire-and-forget callers
-     * ([prefetchAll], [streamMany]'s pre-trigger) ignore them — the fetches still run, commit,
-     * and broadcast in the store scope, and a per-key failure is reported through [AquiferEvents]
-     * and held in its (un-awaited) deferred. Keys already in flight as single fetches are joined,
-     * not re-requested.
+     * Registers a single-flight fetch for each of [keys] and dispatches the batch — split into
+     * `maxBatchSize` chunks (a [batchFetcher] or a [conditionalBatchFetcher]), or independent
+     * single fetches when neither is configured — **without awaiting**, returning the per-key
+     * [Deferred]s. The chunk calls are dispatched **sequentially** (see [dispatchChunksSequentially]);
+     * every chunk's slices are registered before any call goes out, so a concurrent
+     * `get`/`stream` still joins an in-flight key. [getAll] (via [batchRefresh]) awaits the
+     * deferreds for its result map; the fire-and-forget callers ([prefetchAll], [streamMany]'s
+     * pre-trigger) ignore them — the fetches still run, commit, and broadcast in the store scope,
+     * and a per-key failure is reported through [AquiferEvents] and held in its (un-awaited)
+     * deferred. Keys already in flight as single fetches are joined, not re-requested.
      */
     private fun startBatch(keys: Set<K>): Map<K, Deferred<V>> {
         if (keys.isEmpty()) return emptyMap()
         val deferreds = LinkedHashMap<K, Deferred<V>>()
         if (batchFetcher == null && conditionalBatchFetcher == null) {
             for (key in keys) deferreds[key] = refresh(key)
-        } else {
-            // A CompletableDeferred (not a lazy async, whose await() would start it on the
-            // first slice) so the one call dispatches strictly after every slice is registered
-            // in `inFlight` — robust even on a multi-threaded dispatcher. The shared result is a
+            return deferreds
+        }
+        // Split the set into maxBatchSize chunks, each an independent batch (its own retry-all
+        // unit, so a failing chunk fails only its own keys). Every chunk's slices are registered
+        // *now*, synchronously, so a concurrent get/stream can still join an in-flight key; the
+        // backend calls are dispatched (sequentially) below. maxBatchSize defaults to
+        // Int.MAX_VALUE — a single chunk, the unchanged behaviour.
+        val pending = ArrayList<PendingChunk<K, V>>()
+        for (chunk in keys.chunked(maxBatchSize)) {
+            // A CompletableDeferred (not a lazy async, whose await() would start it on the first
+            // slice) so a chunk's call dispatches strictly after its slices are registered in
+            // `inFlight` — robust even on a multi-threaded dispatcher. The shared result is a
             // per-key FetchResult, so a conditional batch's NotModified rides the same channel.
             val batchResult = CompletableDeferred<Map<K, FetchResult<V>>>()
-            // Published by the shared retry loop; each slice reads it so a terminal per-key
-            // failure reports the batch's true attempt count through onFetchFailed.
+            // Published by this chunk's shared retry loop; each slice reads it so a terminal
+            // per-key failure reports the chunk's true attempt count through onFetchFailed.
             val batchAttempts = AtomicInteger(1)
             val started = LinkedHashSet<K>()
-            for (key in keys) {
+            for (key in chunk) {
                 deferreds[key] = refreshWith(key, onStarted = { started += key }) { _, setAttempts ->
                     val result = try {
                         batchResult.await()
@@ -633,29 +644,43 @@ internal class RealAquifer<K : Any, V : Any>(
             }
             // Request exactly the keys whose slice we started; a key that joined an existing
             // single fetch awaits that one, not batchResult, so it must not be in the call.
-            if (started.isNotEmpty()) dispatchBatch(started, batchResult, batchAttempts)
+            if (started.isNotEmpty()) pending += PendingChunk(started, batchResult, batchAttempts)
         }
+        if (pending.isNotEmpty()) dispatchChunksSequentially(pending)
         return deferreds
     }
 
+    /** One chunk of a split batch: the keys it actually started, and its shared result + attempts. */
+    private class PendingChunk<K : Any, V : Any>(
+        val keys: Set<K>,
+        val result: CompletableDeferred<Map<K, FetchResult<V>>>,
+        val attempts: AtomicInteger,
+    )
+
     /**
-     * Runs the one shared batch call for [keys] and fans its outcome into [batchResult], which
-     * every per-key slice awaits. A failure completes [batchResult] exceptionally so each slice
-     * reports it through [failFetch].
+     * Dispatches the chunk calls **one at a time**. A `maxBatchSize` cap exists to respect a
+     * backend that limits ids per request, and such a backend usually limits concurrency too, so
+     * N chunks must not fan out into N simultaneous calls: each chunk's call (with its own retry
+     * cycle) completes before the next is issued. A chunk that fails completes only its own
+     * [PendingChunk.result] exceptionally and the loop continues; on store-scope cancellation the
+     * remaining chunks are cancelled too. With the default `maxBatchSize` there is a single chunk,
+     * so this is one call, unchanged.
      */
-    private fun dispatchBatch(
-        keys: Set<K>,
-        batchResult: CompletableDeferred<Map<K, FetchResult<V>>>,
-        attempts: AtomicInteger,
-    ) {
+    private fun dispatchChunksSequentially(pending: List<PendingChunk<K, V>>) {
         scope.launch {
-            try {
-                batchResult.complete(fetchBatchWithRetry(keys, attempts))
-            } catch (cancellation: CancellationException) {
-                batchResult.cancel(cancellation)
-                throw cancellation
-            } catch (@Suppress("TooGenericExceptionCaught") failure: Throwable) {
-                batchResult.completeExceptionally(failure)
+            for (chunk in pending) {
+                try {
+                    // Cancellation is cooperative: a chunk whose fetch returns without suspending
+                    // (a synchronous fetcher, or one that closes the store mid-call) would otherwise
+                    // let the loop issue every later chunk after the scope is already cancelled.
+                    ensureActive()
+                    chunk.result.complete(fetchBatchWithRetry(chunk.keys, chunk.attempts))
+                } catch (cancellation: CancellationException) {
+                    for (remaining in pending) remaining.result.cancel(cancellation)
+                    throw cancellation
+                } catch (@Suppress("TooGenericExceptionCaught") failure: Throwable) {
+                    chunk.result.completeExceptionally(failure)
+                }
             }
         }
     }

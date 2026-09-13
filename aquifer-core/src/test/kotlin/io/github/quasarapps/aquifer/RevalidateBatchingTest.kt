@@ -5,6 +5,7 @@ import app.cash.turbine.turbineScope
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -69,6 +70,43 @@ class RevalidateBatchingTest {
             // One batched call, and it carried the whole cold set — not just some of it.
             assertEquals(listOf(keys.toSet()), batches)
             assertEquals(0, reads)
+
+            streams.forEach { it.cancelAndIgnoreRemainingEvents() }
+        }
+    }
+
+    @Test
+    fun `the sweep splits its batch into maxBatchSize chunks`() = runTest {
+        val clock = FakeClock()
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            clock(clock)
+            batchFetcher(maxBatchSize = 2) { keys ->
+                batches += keys
+                keys.associateWith { it.last().digitToInt() }
+            }
+            freshness { timeToLive = 1.minutes }
+        }
+        val keys = listOf("k1", "k2", "k3", "k4", "k5")
+        keys.forEach { store.put(it, 0) }
+
+        turbineScope {
+            val streams = keys.map { store.stream(it).testIn(backgroundScope) }
+            streams.forEach { it.awaitItem() }
+
+            clock.advanceBy(10.minutes) // every active key is stale
+            batches.clear()
+            store.revalidateActive()
+            settle()
+
+            // The reconnect sweep is the fourth advertised call site for the cap. The active set is
+            // unordered, so assert the partition (three chunks, none over the cap, every key once)
+            // rather than the exact grouping.
+            assertEquals(3, batches.size, "five active keys, capped at two, sweep as three chunks")
+            assertTrue(batches.all { it.size <= 2 }, "no chunk exceeds maxBatchSize")
+            assertEquals(keys.toSet(), batches.flatten().toSet(), "every active key is fetched")
+            assertEquals(5, batches.sumOf { it.size }, "and none is fetched twice")
 
             streams.forEach { it.cancelAndIgnoreRemainingEvents() }
         }
