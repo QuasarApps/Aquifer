@@ -9,6 +9,16 @@ versions may contain breaking changes.
 
 ### Added
 
+- `batchFetcher` and `conditionalBatchFetcher` now take an optional `maxBatchSize`, and the cap
+  is honoured by the explicit multi-key reads (`getAll`, `streamMany`, `prefetchAll`,
+  `revalidateActive`), not only the auto-coalescing window. A key set larger than the cap is
+  split into independent calls of at most `maxBatchSize`, each its own retry-all unit — so a
+  backend that limits ids per request (a URL-length cap, an explicit server limit) receives
+  calls no larger than it accepts, and a failing chunk fails only its own keys. The default is
+  unchanged: with no cap the whole set still goes out as one call. `maxBatchSize` was previously
+  reachable only on the windowed `batchFetcher(coalesceWindow, maxBatchSize)` overload, where it
+  bounded the accumulator alone; a non-coalescing store could not express it.
+
 - `revalidateActive(force = true)` refreshes **every** active key regardless of staleness — the
   pull-to-refresh gesture, where the user is overriding the freshness bars the app chose for itself.
   Fetches are still shared per key and epoch-fenced, and `CacheOnly`-only keys are still not active.

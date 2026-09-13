@@ -78,7 +78,8 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * (decided per [freshness], exactly as [getAll] decides) are collapsed into one
      * [batch fetcher][AquiferBuilder.batchFetcher] call, dispatched immediately — so collecting
      * `streamMany` of 50 missing keys is one backend round-trip, not 50, even without a
-     * coalescing window. Without a batch fetcher the keys are streamed individually (still
+     * coalescing window (split into calls of at most `maxBatchSize` when the builder sets one).
+     * Without a batch fetcher the keys are streamed individually (still
      * single-flight-deduped). Every per-key guarantee (fencing, negative caching, persistence,
      * events) is unchanged; batching is purely a fetch-transport optimization.
      *
@@ -165,8 +166,9 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * Warms the cache for many [keys] at once without blocking — the batched, fire-and-forget
      * mirror of [prefetch] (and the write-free twin of [getAll]). Returns immediately; the keys
      * that need loading (decided per [freshness], exactly as [prefetch] decides) are collapsed
-     * into a single [batch fetcher][AquiferBuilder.batchFetcher] call in the store's scope, and
-     * the results land in the cache for the next [get]/[getAll]/[stream].
+     * into a single [batch fetcher][AquiferBuilder.batchFetcher] call in the store's scope (or
+     * into calls of at most `maxBatchSize` when the builder sets that cap), and the results land
+     * in the cache for the next [get]/[getAll]/[stream].
      *
      * Honours [freshness] for the *decision to fetch* — by default [Freshness.CacheFirst], so
      * already-fresh keys trigger nothing — shares each in-flight fetch with any concurrent
@@ -183,7 +185,8 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      * call when the store has a [batch fetcher][AquiferBuilder.batchFetcher] — the cure for
      * the N+1 fetch on list screens. Each key is resolved per [freshness] exactly as [get]
      * decides whether to fetch; the keys that need fetching are gathered into one call (joining
-     * any already in-flight single fetch for a key).
+     * any already in-flight single fetch for a key), or into calls of at most
+     * [maxBatchSize][AquiferBuilder.batchFetcher] when the builder sets that cap.
      *
      * Returns the **resolved subset**: a `Map` of the keys that produced a value, in iteration
      * order of [keys]. Unlike [get], a per-key failure does not throw — a key whose fetch fails
@@ -391,11 +394,12 @@ public interface Aquifer<K : Any, V : Any> : AutoCloseable {
      *
      * With a [batchFetcher][AquiferBuilder.batchFetcher] or
      * [conditionalBatchFetcher][AquiferBuilder.conditionalBatchFetcher] configured, the whole
-     * sweep goes out as **one** call rather than a fetch per key — through the same transport
-     * [getAll] uses, so single-flight, epoch fencing and per-key [AquiferEvents] are unchanged and
-     * a key already in flight joins that fetch instead of being re-requested. A store with only a
-     * single-key fetcher has no multi-key transport, so its sweep is still one fetch per stale key.
-     * Keys the sweep skips are never in the call.
+     * sweep goes out as **one** call rather than a fetch per key — or, when the builder sets a
+     * [maxBatchSize][AquiferBuilder.batchFetcher], as calls of at most that many keys — through the
+     * same transport [getAll] uses, so single-flight, epoch fencing and per-key [AquiferEvents] are
+     * unchanged and a key already in flight joins that fetch instead of being re-requested. A store
+     * with only a single-key fetcher has no multi-key transport, so its sweep is still one fetch per
+     * stale key. Keys the sweep skips are never in the call.
      *
      * Staleness is judged against the entry's own server-declared horizon when it has one
      * ([FetchResult.Fresh.freshFor]) and otherwise against the store-wide

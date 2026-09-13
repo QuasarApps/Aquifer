@@ -608,17 +608,23 @@ internal class RealAquifer<K : Any, V : Any>(
         val deferreds = LinkedHashMap<K, Deferred<V>>()
         if (batchFetcher == null && conditionalBatchFetcher == null) {
             for (key in keys) deferreds[key] = refresh(key)
-        } else {
-            // A CompletableDeferred (not a lazy async, whose await() would start it on the
-            // first slice) so the one call dispatches strictly after every slice is registered
+            return deferreds
+        }
+        // Split the set into maxBatchSize chunks, each an independent batch: a backend that caps
+        // ids per request (a URL-length limit, an explicit cap) then receives calls no larger than
+        // it accepts, and a failing chunk fails only its own keys. maxBatchSize defaults to
+        // Int.MAX_VALUE — a single chunk, the unchanged behaviour.
+        for (chunk in keys.chunked(maxBatchSize)) {
+            // A CompletableDeferred (not a lazy async, whose await() would start it on the first
+            // slice) so this chunk's one call dispatches strictly after every slice is registered
             // in `inFlight` — robust even on a multi-threaded dispatcher. The shared result is a
             // per-key FetchResult, so a conditional batch's NotModified rides the same channel.
             val batchResult = CompletableDeferred<Map<K, FetchResult<V>>>()
-            // Published by the shared retry loop; each slice reads it so a terminal per-key
-            // failure reports the batch's true attempt count through onFetchFailed.
+            // Published by this chunk's shared retry loop; each slice reads it so a terminal
+            // per-key failure reports the chunk's true attempt count through onFetchFailed.
             val batchAttempts = AtomicInteger(1)
             val started = LinkedHashSet<K>()
-            for (key in keys) {
+            for (key in chunk) {
                 deferreds[key] = refreshWith(key, onStarted = { started += key }) { _, setAttempts ->
                     val result = try {
                         batchResult.await()

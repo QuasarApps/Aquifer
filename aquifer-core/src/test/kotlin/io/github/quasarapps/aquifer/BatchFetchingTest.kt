@@ -9,6 +9,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -332,5 +333,90 @@ class BatchFetchingTest {
 
         // The caller gets a typed AquiferException, not a silent coroutine cancellation.
         assertIs<AquiferException>(pending.await().exceptionOrNull())
+    }
+
+    @Test
+    fun `getAll splits the fetch into maxBatchSize chunks`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher(maxBatchSize = 2) { keys ->
+                batches += keys
+                keys.associateWith { it.length }
+            }
+        }
+
+        assertEquals(
+            mapOf("a" to 1, "bb" to 2, "ccc" to 3, "dddd" to 4, "eeeee" to 5),
+            store.getAll(linkedSetOf("a", "bb", "ccc", "dddd", "eeeee")),
+        )
+        assertEquals(3, batches.size, "five keys, capped at two, dispatch as three chunks")
+        assertTrue(batches.all { it.size <= 2 }, "no chunk exceeds maxBatchSize")
+        assertEquals(
+            listOf("a", "bb", "ccc", "dddd", "eeeee"),
+            batches.flatten().sorted(),
+            "every key is fetched exactly once, across the chunks",
+        )
+    }
+
+    @Test
+    fun `a failing chunk fails only its own keys`() = runTest {
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            // maxBatchSize = 1 puts every key in its own chunk, so the failure of one cannot
+            // sink the others the way a single whole-set call would.
+            batchFetcher(maxBatchSize = 1) { keys ->
+                if (keys.single() == "b") throw IOException("b down")
+                keys.associateWith { it.length }
+            }
+        }
+
+        assertEquals(mapOf("a" to 1, "c" to 1), store.getAll(linkedSetOf("a", "b", "c")))
+    }
+
+    @Test
+    fun `conditionalBatchFetcher splits the fetch into maxBatchSize chunks`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            conditionalBatchFetcher(maxBatchSize = 2) { validators ->
+                batches += validators.keys
+                validators.keys.associateWith { FetchResult.Fresh(it.length) }
+            }
+        }
+
+        store.getAll(linkedSetOf("a", "bb", "ccc"))
+        assertEquals(2, batches.size, "three keys, capped at two, dispatch as two chunks")
+        assertTrue(batches.all { it.size <= 2 }, "no chunk exceeds maxBatchSize")
+        assertEquals(listOf("a", "bb", "ccc"), batches.flatten().sorted())
+    }
+
+    @Test
+    fun `a whole-set batch fetcher without a cap stays one call`() = runTest {
+        val batches = mutableListOf<Set<String>>()
+        val store = aquifer<String, Int> {
+            scope(backgroundScope)
+            batchFetcher { keys -> // no maxBatchSize: unchanged, one call for the set
+                batches += keys
+                keys.associateWith { it.length }
+            }
+        }
+
+        store.getAll(linkedSetOf("a", "bb", "ccc", "dddd", "eeeee"))
+        assertEquals(1, batches.size, "the default is a single unbounded call")
+    }
+
+    @Test
+    fun `a non-positive maxBatchSize is rejected`() {
+        assertFailsWith<IllegalArgumentException> {
+            aquifer<String, Int> { batchFetcher(maxBatchSize = 0) { keys -> keys.associateWith { 1 } } }
+        }
+        assertFailsWith<IllegalArgumentException> {
+            aquifer<String, Int> {
+                conditionalBatchFetcher(maxBatchSize = 0) { validators ->
+                    validators.keys.associateWith { FetchResult.Fresh(1) }
+                }
+            }
+        }
     }
 }
