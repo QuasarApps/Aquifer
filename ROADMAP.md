@@ -283,31 +283,6 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   `copy` and `componentN` all change — binary-breaking after 1.0, defaulted and free before it (the
   on-disk envelope takes them the way it took `serverFreshForMillis`). Ship the engine seam and the
   parser separately, as #50/#51 did. *(M)*
-- [ ] **Honour `Retry-After`** — `HttpException(code, url)` keeps the status and drops the headers,
-  and `retry { }` backs off on a fixed exponential schedule, so a `429` or `503` carrying
-  `Retry-After: 30` is retried after at most 250 ms, then 500 ms, straight into the same wall — the
-  one signal a well-behaved client is expected to honour (advisory in HTTP, never a protocol
-  requirement, but the origin's own statement of when to come back), discarded at the seam that
-  was built to carry status. Parse it in both OkHttp helpers (delta-seconds and HTTP-date) onto
-  `HttpException.retryAfter: Duration?` — a defaulted secondary constructor, since the two-argument
-  one is locked. The wiring has to cross the module boundary by itself, because `aquifer-core`
-  cannot see `HttpException`: add a one-property core interface, `RetryAfterHint { val retryAfter:
-  Duration? }`, that `HttpException` implements, and have the retry loop consult it on every
-  failure it is about to back off from. `RetryConfig` also gains
-  `delayFor: (Throwable, attempt: Int) -> Duration?` as the manual override for a transport that
-  carries the header some other way. Both can answer for one failure, so the precedence is fixed
-  and single: **`delayFor` (manual override) → `RetryAfterHint` (transport hint) → the computed
-  exponential schedule** — the retry loop takes the first that returns non-`null`, `null` at either
-  hook meaning "defer to the next". A server instruction replaces the computed delay outright
-  (`maxDelay` does not cap it; obeying `Retry-After` is the point), while `delayFor` sits above it
-  so an app can still override even that. `retryOn` decides *whether* to retry, with one deliberate
-  exception: a stated wait is advice from an untrusted origin, so it is bounded by a `maxRetryAfter`
-  ceiling — a longer or non-finite wait is treated as not-retryable and surfaces the failure (chosen
-  over clamping, so an absurd or hostile wait fails fast rather than parking the key on it).
-  `onFetchRetried` reports whichever delay won. Whether it also seeds the
-  negative-cache window is a second decision: a server-declared
-  30 s suppression is exactly what that window is for, but the streak arithmetic should not
-  multiply it. *(S)*
 - [ ] **One `NetworkCallback` per process, and a validated network** — `revalidateOnReconnect`
   registers a `ConnectivityManager.NetworkCallback` per call for the store's lifetime, so an app
   with a store per data family holds N registrations, each an IPC target on every network event,
@@ -398,6 +373,23 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   much traffic the commit lock actually sees, so a baseline taken today measures a shape that is
   about to move. Revisit after 0.1.0 has users, or the first time someone reports commit
   contention. *(M–L)*
+- [x] **Honour `Retry-After`** (shipped — seam #101, parser #103) — a `429`/`503` carrying
+  `Retry-After` is now retried on the server's stated wait rather than the computed exponential
+  schedule. `aquifer-core` cannot see HTTP types, so the seam is a one-property interface,
+  `RetryAfterHint { val retryAfter: Duration? }`, that the retry loop consults on every failure it
+  is about to back off from; `aquifer-okhttp`'s `HttpException` implements it, and both OkHttp
+  helpers parse the header (delta-seconds and HTTP-date) onto it when they throw. `RetryConfig` also
+  gained `delayFor: (Throwable, attempt: Int) -> Duration?` as the manual override for a transport
+  that carries the wait some other way. Precedence is fixed and single — **`delayFor` →
+  `RetryAfterHint` → the computed schedule** — the first non-`null` winning; a server wait replaces
+  the computed delay outright (`maxDelay` does not cap it) while `delayFor` sits above even that.
+  `retryOn` still decides *whether* to retry, with one exception: a stated wait is untrusted advice,
+  so it is bounded by `retry { maxRetryAfter }` (default 5 min) — a longer or non-finite wait is
+  treated as not-retryable and surfaces the failure (chosen over clamping, so an absurd or hostile
+  wait fails fast rather than parking the key), and a negative one floors to zero. `onFetchRetried`
+  reports whichever delay won. **One deferred decision:** whether a server-declared wait should also
+  seed the negative-cache suppression window — a 30 s `Retry-After` is exactly what that window is
+  for, but the streak arithmetic must not multiply it. *(S)*
 - [x] **Conditional fetching (ETag / Last-Modified)** — shipped as
   `conditionalFetcher { key, validator -> FetchResult }` with `Fresh(value, validator)` /
   `NotModified`: validators are stored next to the value (memory, `PersistedEntry`, the
