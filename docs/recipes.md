@@ -1,13 +1,14 @@
 # Recipes
 
 The [README](../README.md) explains each knob once. The questions that come up in practice are
-*combinations* — how the knobs compose for a particular shape of data. Each recipe below is a
-self-contained, compilable snippet plus the reasoning behind it.
+*combinations* — how the knobs compose for a particular shape of data. Each recipe below is complete
+apart from the stand-in identifiers noted below, plus the reasoning behind it.
 
 Snippets import from `io.github.quasarapps.aquifer` (the core `aquifer { }` builder and
 `Aquifer`/`DataState` types); recipes that reach other modules name the extra dependency inline
 (`aquifer-okhttp` for `HttpException`, `aquifer-persistence-file` for `jsonFileSourceOfTruth`).
-Identifiers like `api`, `cacheDir` and `render` are stand-ins for your own.
+Identifiers like `api`, `cacheDir` and `render`, and the domain types (`User`, `SearchResults`,
+`Report`, …), are stand-ins for your own.
 
 - [A singleton: one keyless value](#a-singleton-one-keyless-value)
 - [Modelling "404 is a value"](#modelling-404-is-a-value)
@@ -82,8 +83,9 @@ Now a missing profile caches and streams as `Content(Profile.Missing)` — an or
 render and the store can serve offline — rather than a `Failure` that retries and negative-caches.
 
 > `DataState.Empty` is **not** the tool for this. `Empty` is emitted only to `CacheOnly` streams on a
-> genuine cache miss or an observed `invalidate`; it is never how a fetcher reports "not found". Model
-> the absence in `V`, as above.
+> genuine cache miss or an observed `invalidate`/`invalidateAll` — so a cache-only screen goes to
+> `Empty` on a logout reset rather than rendering the departed user's data forever — and it is never
+> how a fetcher reports "not found". Model the absence in `V`, as above.
 
 ## Search and autocomplete
 
@@ -128,7 +130,7 @@ Two related wipes, with one sharp edge — how far each reaches into persistence
 // enumerable store — SQLDelight, not the default file store):
 cache.invalidateWhere { key -> key.tenantId == leavingTenant }
 
-// Logout: a full reset that clears memory AND disk on every store, whatever is loaded.
+// Logout: fully reset THIS store — memory and disk, whatever is loaded. Call it on each store you own.
 cache.invalidateAll()
 ```
 
@@ -139,9 +141,10 @@ every persisted key too. `SqlDelightSourceOfTruth` enumerates, so its reach is d
 `JsonFileSourceOfTruth` cannot (its filenames are a one-way SHA-256 of the key), so a matched entry
 that lives *only* on disk — evicted from memory, or never loaded this run — is out of reach there,
 while matched keys the process *is* tracking are still deleted from disk. For a logout that must clear
-disk regardless of what is currently loaded, use `invalidateAll()`: it clears memory and disk on every
-store, and because it advances the epoch fence, responses already in flight for the previous user
-cannot land back in the cache.
+disk regardless of what is currently loaded, use `invalidateAll()`: it clears memory and disk whatever
+is loaded and whether or not the store can enumerate. It acts on the one `Aquifer` you call it on,
+though — an app with a store per data family calls it on each — and because it advances the epoch
+fence, responses already in flight for the previous user cannot land back in the cache.
 
 Keep the predicate pure and side-effect-free — it may be evaluated more than once for the same key.
 
@@ -151,8 +154,10 @@ A data class makes a fine key: its value-based `equals`/`hashCode` mean it works
 extra effort. Persistence adds a requirement, though — the key's **string encoding** names the
 on-disk entry (it is SHA-256'd into the filename, and used as the cipher's associated data). The file
 store defaults that encoding to `toString()`, whose output for a data class includes field *names and
-order*. Reorder or rename a field in a later refactor and every cached file silently orphans (and any
-value-based-`hashCode` TTL jitter re-rolls). Pin an explicit, stable encoding instead:
+order*. Reorder or rename a field in a later refactor and every cached file silently orphans; a
+*reorder* additionally re-rolls any value-based-`hashCode` TTL jitter, since the generated
+`hashCode()` combines field values in declaration order — a rename leaves `hashCode()` (and the
+jitter) untouched, because field names never enter it. Pin an explicit, stable encoding instead:
 
 ```kotlin
 import io.github.quasarapps.aquifer.aquifer
