@@ -8,15 +8,12 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
-import java.time.ZoneOffset
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
 class RetryAfterTest {
@@ -62,22 +59,28 @@ class RetryAfterTest {
 
     @Test
     fun `a past HTTP-date Retry-After floors to zero`() = runTest {
+        // Anchored on the response's own Date, so the gap is deterministic (a 2015 target against a
+        // 2024 Date is negative → zero) rather than dependent on the wall clock at receipt.
         val wait = retryAfterFrom(
-            MockResponse().setResponseCode(503).setHeader("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT"),
+            MockResponse()
+                .setResponseCode(503)
+                .setHeader("Date", "Mon, 01 Jan 2024 00:00:00 GMT")
+                .setHeader("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT"),
         )
 
         assertEquals(Duration.ZERO, wait)
     }
 
     @Test
-    fun `a future HTTP-date Retry-After becomes the gap until then`() = runTest {
-        val oneHourOut = ZonedDateTime.now(ZoneOffset.UTC).plusHours(1).format(DateTimeFormatter.RFC_1123_DATE_TIME)
+    fun `a future HTTP-date Retry-After is the exact gap from the response Date`() = runTest {
+        val wait = retryAfterFrom(
+            MockResponse()
+                .setResponseCode(503)
+                .setHeader("Date", "Mon, 01 Jan 2024 00:00:00 GMT")
+                .setHeader("Retry-After", "Mon, 01 Jan 2024 01:00:00 GMT"),
+        )
 
-        val wait = retryAfterFrom(MockResponse().setResponseCode(503).setHeader("Retry-After", oneHourOut))
-
-        // Measured against the response's receipt instant, so a hair under a full hour; wide window
-        // keeps it robust on a slow runner while still proving the date arithmetic ran.
-        assertTrue(wait != null && wait in 3540.seconds..3600.seconds, "expected ~1h, was $wait")
+        assertEquals(1.hours, wait)
     }
 
     @Test
@@ -85,6 +88,20 @@ class RetryAfterTest {
         val wait = retryAfterFrom(MockResponse().setResponseCode(503).setHeader("Retry-After", "-5"))
 
         assertEquals(Duration.ZERO, wait)
+    }
+
+    @Test
+    fun `an all-digit Retry-After too large for Long surfaces as an infinite wait`() = runTest {
+        // A valid-but-absurd delta-seconds that overflows Long must not fall through to null (and the
+        // short computed backoff); it becomes a non-finite wait that trips the maxRetryAfter ceiling.
+        // Uses 429 rather than 503: OkHttp's own RetryAndFollowUpInterceptor parses a 503's numeric
+        // Retry-After (Integer.valueOf) and would throw on the overflow before the fetcher sees it,
+        // whereas a 429 — the canonical Retry-After code — passes straight through to our parser.
+        val wait = retryAfterFrom(
+            MockResponse().setResponseCode(429).setHeader("Retry-After", "99999999999999999999999999"),
+        )
+
+        assertEquals(Duration.INFINITE, wait)
     }
 
     @Test

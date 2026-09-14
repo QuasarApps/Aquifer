@@ -26,9 +26,11 @@ versions may contain breaking changes.
 - `aquifer-okhttp` now reads the `Retry-After` header onto the failure it throws. `HttpException`
   implements `RetryAfterHint`, and both `okHttpFetcher` and `okHttpConditionalFetcher` parse the
   header on the failing (non-2xx, non-304) response into `HttpException.retryAfter` — accepting both
-  spec forms, delta-seconds (`Retry-After: 120`) and an HTTP-date, the latter measured from when the
-  response was received. A past date or negative delta floors to zero ("retry now") and an absent or
-  unparseable header leaves `retryAfter` `null`, since the header is advisory. So a `429`/`503` that
+  spec forms, delta-seconds (`Retry-After: 120`) and an HTTP-date, the latter measured from the
+  response's own `Date` (falling back to its receipt time). A past date or negative delta floors to
+  zero ("retry now"), an absent or unparseable header leaves `retryAfter` `null` (the header is
+  advisory), and an all-digit value too large for a `Long` becomes a non-finite wait so it trips the
+  `maxRetryAfter` ceiling rather than slipping into the short computed backoff. So a `429`/`503` that
   names a wait now steers the retry loop by that wait (still bounded by `retry { maxRetryAfter }`)
   with no extra configuration. Purely additive: the public constructor and existing behaviour are
   unchanged, and a response without the header behaves exactly as before.
