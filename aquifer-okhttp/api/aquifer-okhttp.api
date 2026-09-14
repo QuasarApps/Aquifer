@@ -2,9 +2,10 @@ public final class io/github/quasarapps/aquifer/okhttp/AwaitKt {
 	public static final fun await (Lokhttp3/Call;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
-public final class io/github/quasarapps/aquifer/okhttp/HttpException : java/io/IOException {
+public final class io/github/quasarapps/aquifer/okhttp/HttpException : java/io/IOException, io/github/quasarapps/aquifer/RetryAfterHint {
 	public fun <init> (ILjava/lang/String;)V
 	public final fun getCode ()I
+	public fun getRetryAfter-FghU774 ()Lkotlin/time/Duration;
 	public final fun getUrl ()Ljava/lang/String;
 }
 

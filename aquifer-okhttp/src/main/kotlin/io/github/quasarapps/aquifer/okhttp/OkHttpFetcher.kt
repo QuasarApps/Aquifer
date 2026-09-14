@@ -29,7 +29,9 @@ import okhttp3.ResponseBody
  * - Any non-2xx status throws [HttpException] (an `IOException`) carrying the response
  *   [code][HttpException.code], so a retry/negative-cache policy can branch on the status
  *   (e.g. retry only 5xx); it flows through Aquifer's normal failure path (retry policy,
- *   `DataState.Failure`, stale-if-error) by default.
+ *   `DataState.Failure`, stale-if-error) by default. Any `Retry-After` header on the failing
+ *   response is parsed onto [HttpException.retryAfter], so the retry loop honours the server's
+ *   requested wait (bounded by `maxRetryAfter`) instead of its computed backoff.
  * - The call is cancelled if the fetch's coroutine is cancelled, and the response body is
  *   always closed.
  *
@@ -46,7 +48,7 @@ public fun <K : Any, V : Any> okHttpFetcher(
 ): suspend (key: K) -> V = { key ->
     callFactory.newCall(request(key)).await().use { response ->
         if (!response.isSuccessful) {
-            throw HttpException(response.code, response.request.url.toString())
+            throw HttpException(response.code, response.request.url.toString(), parseRetryAfter(response))
         }
         val body = checkNotNull(response.body) {
             "HTTP ${response.code} from ${response.request.url} had no body"
