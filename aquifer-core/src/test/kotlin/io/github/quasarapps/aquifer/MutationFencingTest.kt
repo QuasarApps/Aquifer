@@ -19,7 +19,7 @@ class MutationFencingTest {
 
     @Test
     fun `invalidateAll during an in-flight fetch does not resurrect the data`() = runTest {
-        val disk = InMemorySourceOfTruth<String, String>()
+        val disk = NonEnumerableSourceOfTruth<String, String>()
         val store = aquifer<String, String> {
             scope(backgroundScope)
             fetcher {
@@ -43,7 +43,7 @@ class MutationFencingTest {
 
     @Test
     fun `invalidate during an in-flight fetch does not resurrect the data`() = runTest {
-        val disk = InMemorySourceOfTruth<String, String>()
+        val disk = NonEnumerableSourceOfTruth<String, String>()
         val store = aquifer<String, String> {
             scope(backgroundScope)
             fetcher {
@@ -65,7 +65,7 @@ class MutationFencingTest {
 
     @Test
     fun `a local put wins over a fetch that was already in flight`() = runTest {
-        val disk = InMemorySourceOfTruth<String, String>()
+        val disk = NonEnumerableSourceOfTruth<String, String>()
         val store = aquifer<String, String> {
             scope(backgroundScope)
             fetcher {

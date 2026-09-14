@@ -48,7 +48,7 @@ mavenPublishing {
 
     pom {
         name.set("Aquifer Test")
-        description.set("Test utilities for Aquifer: a programmable fake Aquifer, a deterministic clock, and a settle helper.")
+        description.set("Test utilities for Aquifer: a programmable fake Aquifer, an in-memory SourceOfTruth, a deterministic clock, and a settle helper.")
         url.set("https://github.com/QuasarApps/aquifer")
         licenses {
             license {

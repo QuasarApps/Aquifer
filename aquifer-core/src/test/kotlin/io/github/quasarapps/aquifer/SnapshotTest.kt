@@ -62,7 +62,7 @@ class SnapshotTest {
 
     @Test
     fun `snapshot lists only memory-resident keys, not persisted-only ones`() = runTest {
-        val disk = InMemorySourceOfTruth<String, Int>()
+        val disk = NonEnumerableSourceOfTruth<String, Int>()
         val store = aquifer<String, Int> {
             scope(backgroundScope)
             memoryCache { maxEntries = 1 }

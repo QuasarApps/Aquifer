@@ -20,7 +20,7 @@ class EvictMemoryTest {
 
     @Test
     fun `evictMemory drops memory but a later read rehydrates from disk`() = runTest {
-        val disk = InMemorySourceOfTruth<String, String>()
+        val disk = NonEnumerableSourceOfTruth<String, String>()
         val store = aquifer<String, String> {
             scope(backgroundScope)
             fetcher { "network-$it" }
@@ -72,7 +72,7 @@ class EvictMemoryTest {
 
     @Test
     fun `trimToSize keeps the most-recently-used and drops the least-recently-used`() = runTest {
-        val disk = InMemorySourceOfTruth<String, String>()
+        val disk = NonEnumerableSourceOfTruth<String, String>()
         val store = aquifer<String, String> {
             scope(backgroundScope)
             memoryCache { maxEntries = 3 }
@@ -93,7 +93,7 @@ class EvictMemoryTest {
 
     @Test
     fun `trimToSize(0) empties the cache like evictMemory`() = runTest {
-        val disk = InMemorySourceOfTruth<String, String>()
+        val disk = NonEnumerableSourceOfTruth<String, String>()
         val store = aquifer<String, String> {
             scope(backgroundScope)
             fetcher { "network-$it" }
@@ -195,7 +195,7 @@ class EvictMemoryTest {
 
     @Test
     fun `a fetch committed before evictMemory rehydrates its value`() = runTest {
-        val disk = InMemorySourceOfTruth<String, String>()
+        val disk = NonEnumerableSourceOfTruth<String, String>()
         val store = aquifer<String, String> {
             scope(backgroundScope)
             fetcher { "network-$it" }
@@ -271,7 +271,7 @@ class EvictMemoryTest {
 
     @Test
     fun `a fresh stream after evictMemory rehydrates from disk`() = runTest {
-        val disk = InMemorySourceOfTruth<String, String>()
+        val disk = NonEnumerableSourceOfTruth<String, String>()
         val store = aquifer<String, String> {
             scope(backgroundScope)
             fetcher { "network-$it" }
@@ -334,7 +334,7 @@ class EvictMemoryTest {
     /** Capture-then-suspend fetcher: the first fetch of "k" waits at the gate before resolving. */
     @Test
     fun `evictMemory does not fence an in-flight fetch`() = runTest {
-        val disk = InMemorySourceOfTruth<String, String>()
+        val disk = NonEnumerableSourceOfTruth<String, String>()
         val fetchGate = CompletableDeferred<Unit>()
         val store = aquifer<String, String> {
             scope(backgroundScope)

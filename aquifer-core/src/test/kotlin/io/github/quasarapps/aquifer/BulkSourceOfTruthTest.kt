@@ -105,9 +105,9 @@ class BulkSourceOfTruthTest {
 
     @Test
     fun `a store that overrides neither bulk method still batches via the per-key default`() = runTest {
-        // InMemorySourceOfTruth implements only read/write/delete/deleteAll: the default writeAll /
+        // NonEnumerableSourceOfTruth implements only read/write/delete/deleteAll: the default writeAll /
         // deleteMany loop those, so existing custom stores keep working unchanged.
-        val disk = InMemorySourceOfTruth<String, Int>()
+        val disk = NonEnumerableSourceOfTruth<String, Int>()
         val store = aquifer<String, Int> {
             scope(backgroundScope)
             persistence(disk)
@@ -145,7 +145,7 @@ class BulkSourceOfTruthTest {
 
     @Test
     fun `getAll through a store that does not override readAll still serves via the per-key default`() = runTest {
-        val disk = InMemorySourceOfTruth<String, Int>()
+        val disk = NonEnumerableSourceOfTruth<String, Int>()
         disk.storage["a"] = PersistedEntry(1, writtenAtMillis = 0)
         disk.storage["b"] = PersistedEntry(2, writtenAtMillis = 0)
         val store = aquifer<String, Int> {

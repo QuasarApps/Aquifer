@@ -9,6 +9,18 @@ versions may contain breaking changes.
 
 ### Added
 
+- `InMemorySourceOfTruth` in `aquifer-test`: a published, documented `SourceOfTruth` backed by a
+  synchronized `LinkedHashMap`, so a consumer can drive the **real** engine against persistence
+  without touching disk. It implements the full SPI natively — including bulk `readAll`/`writeAll`/
+  `deleteMany` and enumerable, non-null `keys()`/`keysWhere()` (so `invalidateWhere` is disk-wide) —
+  and exposes an `entries` snapshot for assertions (in first-write order). Its `latency` (a
+  virtual-time `delay` before every operation) and failure knobs — `failWith` (throw from every
+  operation), or the direction-specific `failReadsWith`/`failWritesWith` for the "reads fail" and the
+  common "writes fail, reads still hydrate" cases — are settable at construction and between calls,
+  each safely published across threads, and inject slow or failing persistence so the engine's
+  timing and failing-store paths (e.g. a propagating write failure, `onPersistenceWriteFailed`) are
+  reachable deterministically.
+
 - Fetch retries can honour a server-declared wait. A failure that implements the new
   `RetryAfterHint` interface (`retryAfter: Duration?`) has that wait used instead of the computed
   exponential backoff for that attempt, uncapped by `maxDelay` — the seam a transport uses to carry

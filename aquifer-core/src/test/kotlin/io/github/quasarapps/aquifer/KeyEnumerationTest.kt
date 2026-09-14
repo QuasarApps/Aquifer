@@ -68,7 +68,7 @@ class KeyEnumerationTest {
 
     @Test
     fun `a store that does not override keys cannot enumerate`() = runTest {
-        val disk = InMemorySourceOfTruth<String, Int>()
+        val disk = NonEnumerableSourceOfTruth<String, Int>()
         disk.storage["a"] = PersistedEntry(1, writtenAtMillis = 0)
 
         assertNull(disk.keys(), "the default opts out of enumeration")
@@ -105,7 +105,7 @@ class KeyEnumerationTest {
 
     @Test
     fun `invalidateWhere cannot reach an untracked persisted key when the store does not enumerate`() = runTest {
-        val disk = InMemorySourceOfTruth<String, Int>() // keeps the null default: opts out
+        val disk = NonEnumerableSourceOfTruth<String, Int>() // keeps the null default: opts out
         disk.storage["cold"] = PersistedEntry(1, writtenAtMillis = 0)
         val store = aquifer<String, Int> {
             scope(backgroundScope)
