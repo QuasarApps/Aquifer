@@ -198,7 +198,7 @@ What every consuming app touches daily; highest user-facing leverage.
   `Failure` throws its error. Pure addition; the existing `vararg Pair<K, V>` entry point keeps its
   meaning. *(S)*
 - [x] **A recipes page** (shipped — #104) — `docs/recipes.md`, linked from the README's
-  core-concepts section, with six compilable recipes for the combinations the per-knob README does
+  core-concepts section, with six recipes for the combinations the per-knob README does
   not cover: a keyless singleton (`Aquifer<Unit, Config>`), modelling a `404` as a value (since
   `V : Any`, absence lives *in* `V`; a fetcher that throws is a `Failure`, and `DataState.Empty` is
   not the tool), search/autocomplete (a coalescing `batchFetcher` + a bounded `negativeCache` + a

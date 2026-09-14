@@ -1,8 +1,8 @@
 # Recipes
 
 The [README](../README.md) explains each knob once. The questions that come up in practice are
-*combinations* — how the knobs compose for a particular shape of data. Each recipe below is complete
-apart from the stand-in identifiers noted below, plus the reasoning behind it.
+*combinations* — how the knobs compose for a particular shape of data. Each recipe below is a snippet
+— complete apart from the stand-in identifiers noted under it — plus the reasoning behind it.
 
 Snippets import from `io.github.quasarapps.aquifer` (the core `aquifer { }` builder and
 `Aquifer`/`DataState` types); recipes that reach other modules name the extra dependency inline
