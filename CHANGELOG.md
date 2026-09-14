@@ -21,8 +21,17 @@ versions may contain breaking changes.
   is bounded by a new `retry { maxRetryAfter }` (default 5 minutes): a longer or non-finite wait is
   treated as not-retryable — the failure surfaces rather than parking the key, ending the retry cycle
   even when `retryOn` would allow it — and a negative one floors to zero. Purely additive — a store that sets
-  neither override behaves exactly as before. (The `aquifer-okhttp` parser that reads the
-  `Retry-After` header onto `HttpException` is a separate follow-up.)
+  neither override behaves exactly as before.
+
+- `aquifer-okhttp` now reads the `Retry-After` header onto the failure it throws. `HttpException`
+  implements `RetryAfterHint`, and both `okHttpFetcher` and `okHttpConditionalFetcher` parse the
+  header on the failing (non-2xx, non-304) response into `HttpException.retryAfter` — accepting both
+  spec forms, delta-seconds (`Retry-After: 120`) and an HTTP-date, the latter measured from when the
+  response was received. A past date or negative delta floors to zero ("retry now") and an absent or
+  unparseable header leaves `retryAfter` `null`, since the header is advisory. So a `429`/`503` that
+  names a wait now steers the retry loop by that wait (still bounded by `retry { maxRetryAfter }`)
+  with no extra configuration. Purely additive: the public constructor and existing behaviour are
+  unchanged, and a response without the header behaves exactly as before.
 
 - `batchFetcher(maxBatchSize) { … }` and `conditionalBatchFetcher(maxBatchSize) { … }` overloads
   that cap how many keys go in one backend call. A key set larger than the cap is split into
