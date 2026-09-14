@@ -197,16 +197,15 @@ What every consuming app touches daily; highest user-facing leverage.
   `Failure(error, cached)` included), a valueless `Loading` or `Empty` is a miss, and a valueless
   `Failure` throws its error. Pure addition; the existing `vararg Pair<K, V>` entry point keeps its
   meaning. *(S)*
-- [ ] **A recipes page** — the README explains each knob once; the questions that arrive after a
-  release are combinations: a singleton (`Aquifer<Unit, Config>`); "404 is a value" (`V : Any`, so
-  absence has to be modelled *in* `V` — to the store a 404 is a *failure*, which the negative cache
-  remembers as one and every fetch-capable stream renders as `Failure`, never as `Empty`);
-  search/autocomplete (key = query, `coalesceWindow`, `negativeCache { maxEntries }`, and why
-  `keyEpochs` grows — #13); tenant scoping and logout
-  (`invalidateWhere` reaches disk only on an enumerable store, so the file store needs
-  `invalidateAll`); data-class keys and `keyEncoder` stability across refactors; blocking fetchers
-  and `Dispatchers.IO`. One `docs/recipes.md`, each recipe a compilable snippet, linked from the
-  README's core-concepts section. *(S)*
+- [x] **A recipes page** (shipped — #104) — `docs/recipes.md`, linked from the README's
+  core-concepts section, with six compilable recipes for the combinations the per-knob README does
+  not cover: a keyless singleton (`Aquifer<Unit, Config>`), modelling a `404` as a value (since
+  `V : Any`, absence lives *in* `V`; a fetcher that throws is a `Failure`, and `DataState.Empty` is
+  not the tool), search/autocomplete (a coalescing `batchFetcher` + a bounded `negativeCache` + a
+  per-collector `maxAge`), tenant scoping and logout (`invalidateWhere` clears matched *tracked*
+  keys from memory and disk, and reaches disk-only untracked keys only on an enumerable store, so
+  the file store falls back to `invalidateAll`), refactor-safe data-class keys via an explicit
+  injective `keyEncoder`, and confining blocking fetchers to `Dispatchers.IO`. *(S)*
 - [x] **Widen the CLI sample past its first five scenarios** — the original five (cold start, SWR,
   `put`, "process death", reconnect-with-retry) are now scenarios 1-5 of a `coreLoopTour`, followed
   by a `featureTour` covering single-flight dedup, `prefetch`, batched `getAll`, conditional (304)

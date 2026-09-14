@@ -124,20 +124,24 @@ memory without limit. `maxAge` lets a collector accept results up to that old be
 Two related wipes, with one sharp edge — how far each reaches into persistence.
 
 ```kotlin
-// Drop one tenant's entries. Reaches memory always; reaches disk only on an enumerable store.
+// Drop one tenant's tracked entries from memory AND disk (disk-only untracked keys need an
+// enumerable store — SQLDelight, not the default file store):
 cache.invalidateWhere { key -> key.tenantId == leavingTenant }
 
-// Logout: a full reset that clears memory AND disk on every store.
+// Logout: a full reset that clears memory AND disk on every store, whatever is loaded.
 cache.invalidateAll()
 ```
 
-`invalidateWhere(predicate)` drops every in-process key the predicate matches, and reaches *persisted*
-keys **only when the `SourceOfTruth` can enumerate them**: `SqlDelightSourceOfTruth` can, so there its
-`invalidateWhere` is disk-wide; the default `JsonFileSourceOfTruth` cannot — its filenames are a
-one-way SHA-256 of the key — so its `invalidateWhere` is **memory-only**. For a logout that must clear
-cached data on disk under the file store, use `invalidateAll()`: it clears memory and disk on every
+`invalidateWhere(predicate)` drops each matched key from **both memory and disk**, fenced exactly like
+`invalidate`. It tests the predicate against the keys the store tracks in-process (resident memory,
+active streams, in-flight fetches) and — **when the `SourceOfTruth` can enumerate keys** — against
+every persisted key too. `SqlDelightSourceOfTruth` enumerates, so its reach is disk-wide; the default
+`JsonFileSourceOfTruth` cannot (its filenames are a one-way SHA-256 of the key), so a matched entry
+that lives *only* on disk — evicted from memory, or never loaded this run — is out of reach there,
+while matched keys the process *is* tracking are still deleted from disk. For a logout that must clear
+disk regardless of what is currently loaded, use `invalidateAll()`: it clears memory and disk on every
 store, and because it advances the epoch fence, responses already in flight for the previous user
-cannot land back in the cache after the reset.
+cannot land back in the cache.
 
 Keep the predicate pure and side-effect-free — it may be evaluated more than once for the same key.
 
@@ -153,6 +157,7 @@ value-based-`hashCode` TTL jitter re-rolls). Pin an explicit, stable encoding in
 ```kotlin
 import io.github.quasarapps.aquifer.aquifer
 import io.github.quasarapps.aquifer.persistence.jsonFileSourceOfTruth   // aquifer-persistence-file
+import kotlin.time.Duration.Companion.minutes
 
 data class ArticleKey(val locale: String, val slug: String)
 
@@ -161,15 +166,19 @@ val articles = aquifer<ArticleKey, Article> {
     freshness { timeToLive = 10.minutes }
     persistence(
         jsonFileSourceOfTruth(
+            // Length-prefix the first component so the encoding stays injective even if a component
+            // contains the separator — and stable across refactors, unlike toString().
             directory = cacheDir.resolve("articles"),
-            // Stable across refactors — unlike toString(), which changes if fields move or rename.
-            keyEncoder = { "${it.locale}/${it.slug}" },
+            keyEncoder = { "${it.locale.length}:${it.locale}:${it.slug}" },
         ),
     )
 }
 ```
 
 Choose an encoding that is **injective** (distinct keys never collide) and stable across refactors.
+A bare `"$locale/$slug"` is *not* injective — `ArticleKey("en/us", "story")` and
+`ArticleKey("en", "us/story")` both collapse to `en/us/story`; the length prefix above fixes that by
+pinning where the first component ends.
 `SqlDelightSourceOfTruth` goes one step further: it takes both a `keyEncode` and a `keyDecode` that
 inverts it, because it reconstructs the original keys when enumerating for `invalidateWhere`.
 
