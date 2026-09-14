@@ -27,13 +27,17 @@ versions may contain breaking changes.
   implements `RetryAfterHint`, and both `okHttpFetcher` and `okHttpConditionalFetcher` parse the
   header on the failing (non-2xx, non-304) response into `HttpException.retryAfter` — accepting both
   spec forms, delta-seconds (`Retry-After: 120`) and an HTTP-date, the latter measured from the
-  response's own `Date` (falling back to its receipt time). A past date or negative delta floors to
-  zero ("retry now"), an absent or unparseable header leaves `retryAfter` `null` (the header is
-  advisory), and an all-digit value too large for a `Long` becomes a non-finite wait so it trips the
-  `maxRetryAfter` ceiling rather than slipping into the short computed backoff. So a `429`/`503` that
-  names a wait now steers the retry loop by that wait (still bounded by `retry { maxRetryAfter }`)
-  with no extra configuration. Purely additive: the public constructor and existing behaviour are
-  unchanged, and a response without the header behaves exactly as before.
+  response's own `Date` header (an HTTP-date with no `Date` to anchor it is ignored rather than
+  measured against the client clock, so a skewed clock can't inflate the wait past the ceiling and
+  turn a retryable failure hard). A past date or negative delta floors to zero ("retry now"), an
+  absent or unparseable header leaves `retryAfter` `null` (the header is advisory), and an all-digit
+  value too large for a `Long` becomes a non-finite wait so it trips the `maxRetryAfter` ceiling
+  rather than slipping into the short computed backoff. So a `429`/`503` that names a wait now steers
+  the retry loop by that wait (still bounded by `retry { maxRetryAfter }`) with no extra
+  configuration. The parsed hint is `@Transient` — it is dropped if the failure is Java-serialized (a
+  `Duration` is not `Serializable`, and the wait is already elapsing). Purely additive: the public
+  constructor and existing behaviour are unchanged, and a response without the header behaves exactly
+  as before.
 
 - `batchFetcher(maxBatchSize) { … }` and `conditionalBatchFetcher(maxBatchSize) { … }` overloads
   that cap how many keys go in one backend call. A key set larger than the cap is split into

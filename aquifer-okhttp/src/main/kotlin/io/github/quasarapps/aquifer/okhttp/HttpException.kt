@@ -24,29 +24,25 @@ import kotlin.time.Duration
  *
  * @property code the HTTP status code of the offending response.
  * @property url the request URL that produced it, included for diagnostics.
+ * @property retryAfter the wait the origin requested via this response's `Retry-After` header, or
+ *   `null` when the header was absent or unusable — a non-negative [Duration] from delta-seconds or
+ *   an HTTP-date (a past date or negative delta floors to [Duration.ZERO], i.e. "retry now"; an
+ *   unrepresentably large delta-seconds becomes [Duration.INFINITE], which the ceiling rejects). The
+ *   public constructor leaves it `null`; the OkHttp fetchers attach it when they throw. It is
+ *   `@Transient`: a `Retry-After` describes a wait already elapsing, so it is deliberately dropped if
+ *   this exception is Java-serialized (a [Duration] is not itself `Serializable`). See
+ *   [RetryAfterHint] for how the retry loop consults it.
  */
-public class HttpException(
+public class HttpException internal constructor(
     public val code: Int,
     public val url: String,
+    @Transient override val retryAfter: Duration?,
 ) : IOException("HTTP $code fetching $url"), RetryAfterHint {
 
     /**
-     * The wait the origin requested via this response's `Retry-After` header, or `null` when the
-     * header was absent or unusable. A non-negative [Duration] parsed from delta-seconds or an
-     * HTTP-date (a past date, or a negative delta, floors to [Duration.ZERO], i.e. "retry now").
-     * The public constructor leaves it `null`; the OkHttp fetchers populate it when they throw.
-     * See [RetryAfterHint] for how the retry loop consults it.
+     * The locked public constructor: a failure with no `Retry-After` hint. The OkHttp fetchers use
+     * the internal three-argument primary constructor to attach a parsed hint when the response
+     * carried the header.
      */
-    override var retryAfter: Duration? = null
-        private set
-
-    /**
-     * Records a parsed `Retry-After` wait alongside the status. Internal to this module: the OkHttp
-     * fetchers call it so a `Retry-After`-bearing failure carries its hint, while the public surface
-     * stays the single [code]/[url] constructor plus the read-only [retryAfter]. Pass `null` when
-     * there is no header to honour.
-     */
-    internal constructor(code: Int, url: String, retryAfter: Duration?) : this(code, url) {
-        this.retryAfter = retryAfter
-    }
+    public constructor(code: Int, url: String) : this(code, url, null)
 }

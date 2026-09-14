@@ -8,6 +8,10 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.ObjectInputStream
+import java.io.ObjectOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -84,6 +88,18 @@ class RetryAfterTest {
     }
 
     @Test
+    fun `an HTTP-date Retry-After with no Date header is ignored`() = runTest {
+        // Without a Date to anchor against, measuring the gap would fall back to the client's receipt
+        // clock, where a slow clock could inflate the wait past maxRetryAfter and turn a retryable
+        // failure hard. So an unanchored HTTP-date is dropped (null → computed backoff), not guessed.
+        val wait = retryAfterFrom(
+            MockResponse().setResponseCode(503).setHeader("Retry-After", "Mon, 01 Jan 2099 00:00:00 GMT"),
+        )
+
+        assertNull(wait)
+    }
+
+    @Test
     fun `a negative delta-seconds floors to zero`() = runTest {
         val wait = retryAfterFrom(MockResponse().setResponseCode(503).setHeader("Retry-After", "-5"))
 
@@ -130,5 +146,25 @@ class RetryAfterTest {
         val hint: RetryAfterHint = assertFailsWith<HttpException> { fetcher("k") }
 
         assertEquals(10.seconds, hint.retryAfter)
+    }
+
+    @Test
+    fun `a Retry-After-bearing HttpException survives Java serialization and drops the transient hint`() = runTest {
+        // HttpException is Serializable (via IOException), but a Duration is not — so without the
+        // @Transient on retryAfter, serializing the one failure this feature exists to produce (a
+        // Retry-After-bearing 429/503) would throw NotSerializableException in a Bundle/WorkManager/
+        // crash pipeline. The hint is dropped across the wire (it describes an already-elapsing wait).
+        server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "120"))
+        val failure = assertFailsWith<HttpException> { fetcher("k") }
+        assertEquals(120.seconds, failure.retryAfter)
+
+        val bytes = ByteArrayOutputStream().apply {
+            ObjectOutputStream(this).use { it.writeObject(failure) }
+        }.toByteArray()
+        val restored = ObjectInputStream(ByteArrayInputStream(bytes)).use { it.readObject() as HttpException }
+
+        assertEquals(503, restored.code)
+        assertEquals(failure.url, restored.url)
+        assertNull(restored.retryAfter)
     }
 }
