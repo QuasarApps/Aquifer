@@ -449,6 +449,24 @@ items don't all revalidate in the same frame.
 Retries happen *inside* the shared single-flight fetch: observers see one `Loading` and one
 terminal state per cycle, and jitter only ever shortens delays so `maxDelay` is a hard cap.
 
+A server can also say *when* to come back. If a failure implements the `RetryAfterHint` interface —
+which `aquifer-okhttp`'s `HttpException` will once its `Retry-After` parser lands (a separate
+follow-up; today you supply the hint from your own transport, or use `delayFor` below) — the retry
+loop honours that wait instead of the computed backoff for that attempt, and, unlike the schedule, it is
+**not** capped by `maxDelay` (obeying the server's stated wait is the point). To set the wait
+yourself — or to supply one for a transport that carries the header some other way — use
+`retry { delayFor = { throwable, attempt -> … } }`, which sits above the hint. The precedence is
+`delayFor` → the failure's `RetryAfterHint` → the computed schedule, and the first non-`null` wins.
+Both decide only *how long* to wait — `retryOn` decides *whether* to retry — with one exception: a
+wait rejected by `maxRetryAfter` (below) ends the retry cycle regardless. `onFetchRetried` reports
+whichever delay won.
+
+Because a `Retry-After` is advice from an untrusted origin, a stated wait is bounded by
+`maxRetryAfter` (default 5 minutes): a longer — or non-finite — wait is treated as *not retryable*,
+so the failure surfaces now rather than parking the fetch (and every stream collector of the key) on
+a hostile or misconfigured value. Raise `maxRetryAfter` to honour longer waits, or lower it to fail
+faster; it never caps the computed backoff (that's `maxDelay`).
+
 ### Conditional fetching (ETag / 304)
 
 When the backend supports HTTP revalidation, a stale entry doesn't need a re-download to
