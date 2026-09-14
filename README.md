@@ -158,6 +158,10 @@ An `Aquifer<K, V>` manages one kind of data, addressed by key — `Aquifer<UserI
 `Aquifer<Query, SearchResults>`. Make it a singleton (Hilt/Koin) so every screen shares the
 same cache and update bus.
 
+For worked combinations of the knobs below — a keyless singleton, modelling a `404` as a value,
+search/autocomplete, tenant scoping and logout, refactor-safe data-class keys, and blocking
+fetchers — see the [**Recipes**](docs/recipes.md).
+
 ### Freshness decides the cache/network dance
 
 A cached entry is **fresh** until it outlives `timeToLive`, then it's **stale** — still
