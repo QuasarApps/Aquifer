@@ -2,6 +2,7 @@ package io.github.quasarapps.aquifer
 
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -20,7 +21,9 @@ import kotlin.time.Duration.Companion.seconds
  *
  * Delays grow exponentially — `initialDelay`, then `initialDelay * multiplier`, and so on —
  * capped at [maxDelay]. [jitter] then randomly *shortens* each delay by up to that fraction,
- * de-synchronising clients that fail in lockstep without ever exceeding the configured cap.
+ * de-synchronising clients that fail in lockstep without ever exceeding the configured cap. That
+ * describes the *computed* schedule only: a [delayFor] override or a failure's [RetryAfterHint]
+ * replaces the computed delay for an attempt and is **not** capped by [maxDelay] (see [delayFor]).
  *
  * Retrying happens inside the shared single-flight fetch: observers see one `Loading` state
  * for the whole cycle and one `Failure` if every attempt fails. Individual attempts are
@@ -48,7 +51,12 @@ public class RetryConfig internal constructor() {
             field = value
         }
 
-    /** Upper bound for any single delay. Must be positive and finite. Defaults to 30 s. */
+    /**
+     * Upper bound for any single *computed backoff* delay. Must be positive and finite. Defaults to
+     * 30 s. The override paths — a failure's [RetryAfterHint] and [delayFor] — deliberately bypass
+     * this cap so a server- or app-stated wait is honoured in full; they are instead bounded by
+     * [maxRetryAfter].
+     */
     public var maxDelay: Duration = 30.seconds
         set(value) {
             require(value.isPositive() && value.isFinite()) {
@@ -80,4 +88,44 @@ public class RetryConfig internal constructor() {
      * Cancellation is never passed to this predicate.
      */
     public var retryOn: (Throwable) -> Boolean = { true }
+
+    /**
+     * A manual per-failure delay override: given the [Throwable] and the 1-based number of the
+     * [attempt] that just failed, return the delay to wait before the next attempt, or `null` to
+     * defer to the normal decision. It sits at the **top** of the delay precedence —
+     * `delayFor` → the failure's [RetryAfterHint] → the computed exponential schedule — so an app
+     * can override even a server-sent `Retry-After`, or supply one for a transport that carries the
+     * header some other way. A returned delay **replaces** the computed backoff and is *not* capped
+     * by [maxDelay]; a non-positive delay retries immediately. The [maxRetryAfter] ceiling that
+     * bounds an untrusted `Retry-After` applies here too, on purpose (an override can carry a bug):
+     * a returned wait longer than it — or non-finite — is treated as not-retryable and surfaces the
+     * failure. So if you deliberately return a long backoff from this hook, **raise [maxRetryAfter]
+     * to match**, or those attempts will silently not retry.
+     *
+     * This decides only *how long* to wait, not *whether* to retry — [retryOn] gates that and
+     * [maxAttempts] bounds the count — except that a returned wait the [maxRetryAfter] ceiling
+     * rejects (above) ends the retry cycle even when [retryOn] would allow it. An override that
+     * itself throws is treated as `null`
+     * (defer). Like [retryOn], it is shared across keys and may be invoked **concurrently** for
+     * different keys retrying at once, so it must be safe for concurrent use — keep it pure, or
+     * synchronise any state it touches. Defaults to always deferring, so behaviour is unchanged
+     * unless set.
+     */
+    public var delayFor: (throwable: Throwable, attempt: Int) -> Duration? = { _, _ -> null }
+
+    /**
+     * Ceiling for a stated wait honoured from a [RetryAfterHint] or [delayFor]. `Retry-After` is
+     * advice from an untrusted origin (and a `delayFor` can carry a bug), so a stated wait longer
+     * than this — or non-finite — is treated as **not retryable**: the failure surfaces now rather
+     * than parking the fetch (and, on the shared single-flight, every stream collector of the key)
+     * on it. This does **not** cap the computed backoff schedule (that is [maxDelay]) and does not
+     * apply when neither override is set. Must be positive and finite. Defaults to 5 minutes.
+     */
+    public var maxRetryAfter: Duration = 5.minutes
+        set(value) {
+            require(value.isPositive() && value.isFinite()) {
+                "maxRetryAfter must be positive and finite, was $value"
+            }
+            field = value
+        }
 }

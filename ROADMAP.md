@@ -300,8 +300,11 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   exponential schedule** — the retry loop takes the first that returns non-`null`, `null` at either
   hook meaning "defer to the next". A server instruction replaces the computed delay outright
   (`maxDelay` does not cap it; obeying `Retry-After` is the point), while `delayFor` sits above it
-  so an app can still override even that; `retryOn` independently decides *whether* to retry at all,
-  and `onFetchRetried` reports whichever delay won. Whether it also seeds the
+  so an app can still override even that. `retryOn` decides *whether* to retry, with one deliberate
+  exception: a stated wait is advice from an untrusted origin, so it is bounded by a `maxRetryAfter`
+  ceiling — a longer or non-finite wait is treated as not-retryable and surfaces the failure (chosen
+  over clamping, so an absurd or hostile wait fails fast rather than parking the key on it).
+  `onFetchRetried` reports whichever delay won. Whether it also seeds the
   negative-cache window is a second decision: a server-declared
   30 s suppression is exactly what that window is for, but the streak arithmetic should not
   multiply it. *(S)*
