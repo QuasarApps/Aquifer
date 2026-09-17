@@ -1079,16 +1079,20 @@ the existing fencing and single-flight guarantees.
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
   survival. *(S)*
-- [ ] **Supply-chain hardening** — a `dependency-review-action` gate and a CodeQL workflow on
-  PRs (Dependabot bumps versions but does not CVE-alert the existing tree), GitHub Actions pinned
-  to commit SHAs rather than the floating tags in use today (`actions/checkout@v7`,
+- [ ] **Supply-chain hardening** — a `dependency-review-action` gate (Dependabot bumps versions but
+  does not CVE-alert the existing tree), CodeQL widened past the `actions` language, GitHub Actions
+  pinned to commit SHAs rather than the floating tags in use today (`actions/checkout@v7`,
   `actions/setup-java@v6`, `gradle/actions/setup-gradle@v6`, and the reusable Copilot-review
-  workflow at `@main`), and build-provenance/SLSA attestation on the release artifacts. Token
-  scope is already minimal — every workflow carries a top-level `permissions: contents: read`,
-  `contents: write` is scoped to the announce job alone, and the release and announce checkouts
-  run `persist-credentials: false` — so what the artifacts still lack is provenance: they carry
-  the Maven PGP signature and nothing else. Cheap, standard insurance for a widely-embeddable
-  library. *(S)*
+  workflow at `@main`), and build-provenance/SLSA attestation on the release artifacts. Two halves
+  are already in place, so only the gaps above are left. Code scanning *does* run on every PR,
+  through CodeQL **default setup** (`dynamic/github-code-scanning/codeql` — a repository setting
+  rather than a workflow file, which is why `.github/workflows/` has no CodeQL entry), but it
+  analyses only the `actions` language, leaving the Kotlin sources it would most want to scan
+  untouched. And token scope is already minimal: every workflow carries a top-level
+  `permissions: contents: read`, `contents: write` is scoped to the announce job alone, and the
+  release and announce checkouts run `persist-credentials: false`. What the artifacts still lack is
+  provenance — they carry the Maven PGP signature and nothing else. Cheap, standard insurance for a
+  widely-embeddable library. *(S)*
 
 ## Beyond 1.0 — strategic bets
 
