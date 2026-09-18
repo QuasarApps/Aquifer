@@ -52,6 +52,7 @@ public final class io/github/quasarapps/aquifer/test/FakeClock : io/github/quasa
 }
 
 public final class io/github/quasarapps/aquifer/test/InMemorySourceOfTruth : io/github/quasarapps/aquifer/SourceOfTruth {
+	public fun <init> ()V
 	public synthetic fun <init> (JLjava/lang/Throwable;Ljava/lang/Throwable;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (JLjava/lang/Throwable;Ljava/lang/Throwable;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun delete (Ljava/lang/Object;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

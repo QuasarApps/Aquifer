@@ -169,6 +169,18 @@ versions may contain breaking changes.
   transient GitHub API failure can never force a re-publish. The tag is also refused outright if the
   CHANGELOG has no section for it, checked before the build so the failure costs nothing.
 
+### Toolchain
+
+- Kotlin 2.4.10 → **2.4.20** and Robolectric 4.16.1 → **4.17**. The Kotlin bump changes one locked
+  dump: `InMemorySourceOfTruth` takes four defaulted constructor parameters, and 2.4.20 emits a
+  genuine no-arg `<init>()V` for it where 2.4.10 emitted only the two `synthetic`
+  `DefaultConstructorMarker` forms — an artifact of `latency` being a `Duration`, i.e. a value
+  class, which had left the class with no constructor a Java caller could bind to at all. The
+  regenerated `aquifer-test/api/aquifer-test.api` is committed here, and the new entry is kept
+  deliberately: no-argument construction is the class's own documented first example, and the
+  shape now matches its sibling `FakeClock`. Nothing else moved — `apiCheck` passes unchanged on
+  the other six dumps.
+
 ## [0.1.0] - 2026-07-29
 
 First public release. Aquifer is an offline-first, stale-while-revalidate caching data layer for
