@@ -1,5 +1,5 @@
 [versions]
-kotlin = "2.4.10"
+kotlin = "2.4.20"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 # JUnit 6 requires JVM 17+; this library's test compilations follow its JVM 11 target, so we
@@ -10,7 +10,7 @@ okhttp = "5.5.0"
 agp = "8.13.0"
 androidx-lifecycle = "2.9.1"
 androidx-test-core = "1.6.1"
-robolectric = "4.16.1"
+robolectric = "4.17"
 junit4 = "4.13.2"
 compose-runtime = "1.8.2"
 molecule = "2.2.0"
