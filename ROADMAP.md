@@ -737,21 +737,34 @@ The engine's guarantees deserve machine-checked evidence.
   signature jar on the JVM modules, or Lint from `aquifer-android` with `checkDependencies = true`.
   Pick whichever demonstrably fails on a deliberate `compute` call, and keep that call as the
   negative test. *(S)*
-- [ ] **A persistence test kit** — **the in-memory half is shipped — #100:**
+- [x] **A persistence test kit** (shipped — in-memory half #100, contract half #109) —
   `InMemorySourceOfTruth` is published from `aquifer-test`, implementing the whole SPI natively
   (bulk `readAll`/`writeAll`/`deleteMany`, enumerable non-`null` `keys()`/`keysWhere()`, so
   `invalidateWhere` is disk-wide) with an `entries` snapshot for assertions and the injection
   knobs — `latency` under virtual time, `failWith`, and the direction-specific
   `failReadsWith`/`failWritesWith` — so a consumer can drive the **real** engine against
   persistence without touching disk. (`aquifer-core`'s own suite keeps a separate *non-enumerable*
-  double on purpose, for the `keys() == null` fallback.) What remains is the *contract* half: the
-  author of a custom `SourceOfTruth` still has nothing to run their store against — the SPI
-  contract is six paragraphs of prose (null for undecodable, `readAll` omission, `keys()` empty
-  versus `null`, non-atomic `writeAll`, safety under concurrent calls) and no check. Add an
-  abstract contract suite (`AbstractSourceOfTruthContractTest`) that the two shipped adapters run
-  in their own test sets and a custom store's author subclasses. It is also the right first step
-  for the adapter-parity item in 0.4: a shared suite is how parity gets verified rather than
-  asserted. *(M)*
+  double on purpose, for the `keys() == null` fallback.)
+
+  The contract half followed as `AbstractSourceOfTruthContractTest`, turning the six paragraphs of
+  SPI prose into 31 executable clauses — `null` for undecodable rather than a throw, `readAll`
+  *omitting* a missing key rather than mapping it to `null`, `keys()` empty versus `null`, and every
+  method driven concurrently. It deliberately does not pin what the SPI leaves open: `writeAll` and
+  `deleteMany` are *permitted* to be non-atomic, so all-or-nothing and partial-prefix stores both
+  pass, and the genuinely optional clauses are hooks (`isEnumerable`, `persistsValidator`,
+  `persistsServerFreshFor`, `writeUndecodableEntry`) rather than guesses. All three stores in the
+  repo run it — the in-memory fixture, the file store (enumeration opted out) and the SQLDelight
+  adapter (enumerable, native bulk overrides) — 93 executions, and the two adapters were conformant
+  as written, so it documents the contract rather than having found a bug in them.
+
+  Published as a **`java-test-fixtures` variant** rather than from `aquifer-test`'s main source set,
+  so a custom store's author gets it with
+  `testImplementation(testFixtures("io.github.quasarapps:aquifer-test:…"))` while JUnit stays off the
+  main published surface — consumers who only want `fakeAquifer`/`FakeClock`/`settle()` do not
+  inherit it, and the locked `aquifer-test.api` is untouched (BCV does not dump the fixtures
+  variant). That also keeps the 1.0 freeze docket clear of a test-framework dependency it would
+  otherwise have to carry. **It is the first step for the adapter-parity item in 0.4: parity now has
+  a shared suite to be verified against rather than asserted.** *(M)*
 - [ ] **Adopt AGP 9 and unpin the Gradle wrapper** — Dependabot is told to ignore wrapper versions
   from 9.6 because Gradle 9.6 removed an internal API AGP 8.x still uses. A standing ignore rule
   ages silently: the wrapper stops moving, nothing reports it, and the Kotlin and Compose plugin

@@ -9,6 +9,22 @@ versions may contain breaking changes.
 
 ### Added
 
+- `AbstractSourceOfTruthContractTest`, published from a new **`test-fixtures` variant** of
+  `aquifer-test`, turns the `SourceOfTruth` contract into a runnable suite: subclass it, point
+  `createStore()` at your store, and the clauses the SPI states in prose become tests. It pins the
+  parts that are easy to half-implement and that fail in the *engine* rather than in the store —
+  `read` returning `null` for an entry it can no longer decode instead of throwing, `readAll`
+  **omitting** a missing key rather than mapping it to `null`, `keys()` distinguishing "holds
+  nothing" (an empty set) from "cannot enumerate" (`null`), and every method driven concurrently.
+  It does not pin what the SPI leaves open: `writeAll`/`deleteMany` are permitted to be non-atomic,
+  so all-or-nothing and partial-prefix stores both pass, and the optional clauses are hooks
+  (`isEnumerable`, `persistsValidator`, `persistsServerFreshFor`, `writeUndecodableEntry`) rather
+  than assumptions. Consume it with
+  `testImplementation(testFixtures("io.github.quasarapps:aquifer-test:<version>"))`. Because it is a
+  separate variant, JUnit is **not** a transitive dependency of consumers who only use
+  `fakeAquifer`, `FakeClock`, `settle()` or `InMemorySourceOfTruth`, and `aquifer-test`'s locked
+  main API is unchanged.
+
 - `InMemorySourceOfTruth` in `aquifer-test`: a published, documented `SourceOfTruth` backed by a
   synchronized `LinkedHashMap`, so a consumer can drive the **real** engine against persistence
   without touching disk. It implements the full SPI natively — including bulk `readAll`/`writeAll`/
