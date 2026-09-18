@@ -2,6 +2,7 @@ package io.github.quasarapps.aquifer.test
 
 import io.github.quasarapps.aquifer.PersistedEntry
 import io.github.quasarapps.aquifer.SourceOfTruth
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -104,6 +105,21 @@ public abstract class AbstractSourceOfTruthContractTest {
         validator: String? = null,
         serverFreshForMillis: Long? = null,
     ): PersistedEntry<String> = PersistedEntry(value, writtenAtMillis, validator, serverFreshForMillis)
+
+    /**
+     * Drops the envelope fields this store declares it does not persist, so a whole-[PersistedEntry]
+     * comparison stays fair to a store that opted out of carrying them. Comparing whole entries
+     * rather than one field at a time is what holds a *native* bulk override to the same contract as
+     * [SourceOfTruth.read] — a `readAll` that crossed two keys' values, or dropped one's timestamp,
+     * passes any per-field spot check.
+     */
+    private fun PersistedEntry<String>.comparable(): PersistedEntry<String> = copy(
+        validator = validator.takeIf { persistsValidator },
+        serverFreshForMillis = serverFreshForMillis.takeIf { persistsServerFreshFor },
+    )
+
+    private fun Map<String, PersistedEntry<String>>.comparable(): Map<String, PersistedEntry<String>> =
+        mapValues { (_, entry) -> entry.comparable() }
 
     /** Runs [block] against a fresh store, releasing it even when the assertions fail. */
     private fun withStore(block: suspend (SourceOfTruth<String, String>) -> Unit) {
@@ -233,15 +249,17 @@ public abstract class AbstractSourceOfTruthContractTest {
     // ----------------------------------------------------------------------------------- readAll
 
     @Test
-    public fun `readAll returns an entry for every key that has one`() = withStore { store ->
-        store.write("a", entry("1", writtenAtMillis = 10))
-        store.write("b", entry("2", writtenAtMillis = 20))
+    public fun `readAll returns every stored entry whole, not just the keys`() = withStore { store ->
+        // Whole-entry equality on purpose. A native readAll override is a second implementation of
+        // read, and the ways it goes wrong — a dropped timestamp, a validator lost on the batch
+        // path, two keys' values crossed — all survive a per-field spot check.
+        val written = mapOf(
+            "a" to entry("1", writtenAtMillis = 10, validator = "etag-a"),
+            "b" to entry("2", writtenAtMillis = 20, serverFreshForMillis = 500),
+        )
+        written.forEach { (key, value) -> store.write(key, value) }
 
-        val read = store.readAll(listOf("a", "b"))
-
-        assertEquals(setOf("a", "b"), read.keys)
-        assertEquals("1", read.getValue("a").value)
-        assertEquals(20, read.getValue("b").writtenAtMillis)
+        assertEquals(written.comparable(), store.readAll(listOf("a", "b")).comparable())
     }
 
     @Test
@@ -269,11 +287,19 @@ public abstract class AbstractSourceOfTruthContractTest {
     // ---------------------------------------------------------------------------------- writeAll
 
     @Test
-    public fun `writeAll persists every entry`() = withStore { store ->
-        store.writeAll(mapOf("a" to entry("1", writtenAtMillis = 1), "b" to entry("2", writtenAtMillis = 2)))
+    public fun `writeAll persists every entry whole`() = withStore { store ->
+        // Read back through the single-key path, so this pins the batch *write* rather than
+        // agreeing with a matching bug in the batch read.
+        val written = mapOf(
+            "a" to entry("1", writtenAtMillis = 1, validator = "etag-a"),
+            "b" to entry("2", writtenAtMillis = 2, serverFreshForMillis = 500),
+        )
 
-        assertEquals("1", assertNotNull(store.read("a")).value)
-        assertEquals(2, assertNotNull(store.read("b")).writtenAtMillis)
+        store.writeAll(written)
+
+        written.forEach { (key, expected) ->
+            assertEquals(expected.comparable(), assertNotNull(store.read(key)).comparable(), "entry for $key")
+        }
     }
 
     @Test
@@ -388,14 +414,24 @@ public abstract class AbstractSourceOfTruthContractTest {
 
     // ------------------------------------------------------------------------------- concurrency
 
+    /**
+     * Releases every task at once. Without it these tests only *hope* for overlap: `async` starts
+     * eagerly, so against a fast store the writers can finish before the readers are even scheduled
+     * and the case degrades into a sequential one that still passes. Each task awaits the gate, so
+     * the contended window is real rather than incidental.
+     */
+    private suspend fun <T> raced(tasks: List<suspend () -> T>): List<T> = coroutineScope {
+        val gate = CompletableDeferred<Unit>()
+        val started = tasks.map { task -> async(Dispatchers.Default) { gate.await(); task() } }
+        gate.complete(Unit)
+        started.awaitAll()
+    }
+
     @Test
     public fun `concurrent writes to distinct keys all land`() = withStore { store ->
         val keys = (1..32).map { "k$it" }
 
-        coroutineScope {
-            keys.map { key -> async(Dispatchers.Default) { store.write(key, entry("v-$key", writtenAtMillis = 1)) } }
-                .awaitAll()
-        }
+        raced(keys.map { key -> suspend { store.write(key, entry("v-$key", writtenAtMillis = 1)) } })
 
         val read = store.readAll(keys)
         assertEquals(keys.toSet(), read.keys, "every concurrent write must be visible afterwards")
@@ -408,17 +444,15 @@ public abstract class AbstractSourceOfTruthContractTest {
         // disagree came from two different writes — the shape a non-atomic store would expose.
         store.write("k", entry("v0", writtenAtMillis = 0))
 
-        coroutineScope {
-            val writers = (1..16).map { i ->
-                async(Dispatchers.Default) { store.write("k", entry("v$i", writtenAtMillis = i.toLong())) }
-            }
-            val readers = (1..16).map {
-                async(Dispatchers.Default) {
-                    store.read("k")?.let { assertEquals("v${it.writtenAtMillis}", it.value, "torn entry") }
-                }
-            }
-            (writers + readers).awaitAll()
-        }
+        raced(
+            (1..16).map { i -> suspend { store.write("k", entry("v$i", writtenAtMillis = i.toLong())) } } +
+                (1..16).map {
+                    suspend {
+                        store.read("k")?.let { assertEquals("v${it.writtenAtMillis}", it.value, "torn entry") }
+                        Unit
+                    }
+                },
+        )
 
         val settled = assertNotNull(store.read("k"))
         assertEquals("v${settled.writtenAtMillis}", settled.value)
@@ -429,12 +463,47 @@ public abstract class AbstractSourceOfTruthContractTest {
         val keys = (1..16).map { "k$it" }
         store.writeAll(keys.associateWith { entry("v-$it") })
 
-        coroutineScope {
-            val deletes = keys.map { key -> async(Dispatchers.Default) { store.delete(key) } }
-            val reads = keys.map { key -> async(Dispatchers.Default) { store.read(key) } }
-            (deletes + reads).awaitAll()
-        }
+        raced(
+            keys.map { key -> suspend { store.delete(key) } } +
+                keys.map { key -> suspend { store.read(key); Unit } },
+        )
 
         assertEquals(emptyMap(), store.readAll(keys), "every key was deleted, so none should remain")
+    }
+
+    @Test
+    public fun `every method tolerates overlapping calls`() = withStore { store ->
+        // The SPI permits *every* method to overlap every other, not just the single-key three. A
+        // store that overrides the bulk and enumeration seams natively — as the SQLDelight adapter
+        // does for eight of them — has that many more implementations to get wrong, and each one
+        // usually reaches the same connection or lock. This asserts safety rather than an outcome:
+        // with deletes and a deleteAll in the mix the final contents are legitimately racy, so what
+        // is pinned is that nothing throws and the store still works afterwards.
+        val keys = (1..12).map { "k$it" }
+        store.writeAll(keys.associateWith { entry("seed-$it", writtenAtMillis = 1) })
+
+        raced(
+            listOf<suspend () -> Any?>(
+                { store.read("k1") },
+                { store.readAll(keys) },
+                { store.readAll(keys.reversed()) },
+                { store.write("k1", entry("w1", writtenAtMillis = 2)) },
+                { store.writeAll(mapOf("bulk-a" to entry("ba"), "bulk-b" to entry("bb"))) },
+                { store.delete("k2") },
+                { store.deleteMany(listOf("k3", "k4")) },
+                { store.keys() },
+                { store.keysWhere { it.startsWith("k") } },
+                { store.read("k5") },
+                { store.write("k6", entry("w6", writtenAtMillis = 3)) },
+                { store.deleteAll() },
+            ),
+        )
+
+        // Still coherent and usable once the storm passes.
+        store.write("after", entry("ok", writtenAtMillis = 9))
+        val after = assertNotNull(store.read("after"), "the store must still serve reads after concurrent use")
+        assertEquals("ok", after.value)
+        assertEquals(9, after.writtenAtMillis)
+        if (isEnumerable) assertTrue("after" in assertNotNull(store.keys()))
     }
 }

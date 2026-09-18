@@ -397,12 +397,19 @@ public class JsonFileSourceOfTruth<K : Any, V : Any>(
         }
     }
 
+    /**
+     * Deletes the stored entries, and **only** those: a `$TEMP_SUFFIX` file is a write that has not
+     * landed yet, not an entry. Sweeping those too used to break a `write` racing this call — the
+     * temp vanished between being written and being moved into place, so [moveIntoPlace] threw
+     * `NoSuchFileException` at a caller whose only mistake was overlapping an `invalidateAll`. It
+     * also gained nothing: crash-orphaned temps are already gone by here, because
+     * [ensureHousekeeping] clears them before any other filesystem access and [deleteAll] awaits it
+     * first, so every temp still present at this point belongs to an in-flight write of ours.
+     */
     private fun deleteAllFiles() {
         if (!directory.exists()) return
         directory.listDirectoryEntries().forEach { file ->
-            if (file.extension == FILE_EXTENSION || file.fileName.toString().endsWith(TEMP_SUFFIX)) {
-                file.deleteIfExists()
-            }
+            if (file.extension == FILE_EXTENSION) file.deleteIfExists()
         }
     }
 

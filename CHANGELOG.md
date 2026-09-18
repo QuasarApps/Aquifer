@@ -112,6 +112,17 @@ versions may contain breaking changes.
   `Aquifer` directly must update their override. Permitted before 1.0, per this file's header, but
   it is a breaking change rather than a purely additive one.
 
+### Fixed
+
+- `JsonFileSourceOfTruth.deleteAll()` no longer destroys a concurrent write. It swept every
+  `.tmp` file alongside the stored entries, so a `write` that had created its temp but not yet
+  moved it into place lost that temp and failed with `NoSuchFileException` — surfacing to a caller
+  whose only mistake was overlapping a `put` with an `invalidateAll`, which the `SourceOfTruth`
+  contract explicitly permits. `deleteAll` now removes entries only. Nothing is leaked by the
+  narrower sweep: temps orphaned by a crash are already cleared by the one-time housekeeping pass
+  that runs before any other filesystem access, so every temp still present when `deleteAll` runs
+  belongs to an in-flight write. Found by the new `SourceOfTruth` contract suite on its first run.
+
 ### Changed
 
 - `maxBatchSize` on the windowed `batchFetcher(coalesceWindow, maxBatchSize)` overload now also

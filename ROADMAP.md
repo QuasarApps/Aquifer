@@ -747,15 +747,24 @@ The engine's guarantees deserve machine-checked evidence.
   double on purpose, for the `keys() == null` fallback.)
 
   The contract half followed as `AbstractSourceOfTruthContractTest`, turning the six paragraphs of
-  SPI prose into 31 executable clauses — `null` for undecodable rather than a throw, `readAll`
-  *omitting* a missing key rather than mapping it to `null`, `keys()` empty versus `null`, and every
-  method driven concurrently. It deliberately does not pin what the SPI leaves open: `writeAll` and
-  `deleteMany` are *permitted* to be non-atomic, so all-or-nothing and partial-prefix stores both
-  pass, and the genuinely optional clauses are hooks (`isEnumerable`, `persistsValidator`,
-  `persistsServerFreshFor`, `writeUndecodableEntry`) rather than guesses. All three stores in the
-  repo run it — the in-memory fixture, the file store (enumeration opted out) and the SQLDelight
-  adapter (enumerable, native bulk overrides) — 93 executions, and the two adapters were conformant
-  as written, so it documents the contract rather than having found a bug in them.
+  SPI prose into 32 executable clauses — `null` for undecodable rather than a throw, `readAll`
+  *omitting* a missing key rather than mapping it to `null`, `keys()` empty versus `null`, whole
+  entries compared rather than a field at a time (so a native bulk override cannot drop a timestamp
+  or cross two keys' values unnoticed), and every method — bulk and enumeration included — raced
+  against every other behind a shared start gate. It deliberately does not pin what the SPI leaves
+  open: `writeAll` and `deleteMany` are *permitted* to be non-atomic, so all-or-nothing and
+  partial-prefix stores both pass, and the genuinely optional clauses are hooks (`isEnumerable`,
+  `persistsValidator`, `persistsServerFreshFor`, `writeUndecodableEntry`) rather than guesses. All
+  three stores in the repo run it — the in-memory fixture, the file store (enumeration opted out)
+  and the SQLDelight adapter (enumerable, native bulk overrides) — 96 executions.
+
+  **It earned its keep on the first run**, which is the argument for the item: the file store's
+  `deleteAll` swept in-flight `.tmp` files, so a `write` overlapping it lost its temp between
+  creation and `ATOMIC_MOVE` and threw `NoSuchFileException` at a caller whose only mistake was a
+  `put` racing an `invalidateAll`. Fixed here — `deleteAll` now removes entries only, which also
+  costs nothing, since crash-orphaned temps are already cleared by the one-time housekeeping that
+  runs before it. Two years of prose said "safe under concurrent use"; one executable clause
+  disagreed.
 
   Published as a **`java-test-fixtures` variant** rather than from `aquifer-test`'s main source set,
   so a custom store's author gets it with
