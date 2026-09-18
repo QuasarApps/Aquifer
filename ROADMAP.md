@@ -1103,6 +1103,21 @@ the existing fencing and single-flight guarantees.
   dumps, not the internals), what a pre-1.0 source break costs, and one entry per change so
   the `[Unreleased]` sprawl the 0.1.0 tag cleans up does not simply re-accumulate. The
   release-notes automation half of this item moved to Now. *(S)*
+  - **The `testFixtures` variant falls outside both buckets — rule on it before 1.0.**
+    `AbstractSourceOfTruthContractTest` ships from `aquifer-test`'s test-fixtures variant, which
+    BCV does not dump. The test-kit item in 0.5 banks on exactly that: it is what keeps JUnit off
+    the main published surface and the freeze docket clear of a test-framework dependency. The same
+    silence means the class's `protected` hooks carry no compatibility gate, while the README tells
+    external implementors to subclass it — so renaming a hook, or adding an abstract member, breaks
+    every downstream subclass with nothing in this repo noticing. Not dumped, but plainly not
+    internal either: "the BCV dumps" gives no answer for it. The in-repo subclasses are only a
+    partial substitute — the three of them override `createStore`, `destroyStore`, `isEnumerable`
+    and `writeUndecodableEntry`, so a change to those does fail the build, but **none overrides
+    `persistsValidator` or `persistsServerFreshFor`**, which could be renamed or dropped today with
+    the build staying green. Decide whether the variant carries the stability promise; if it does,
+    close that hole deliberately rather than resting on whichever hooks the existing subclasses
+    happen to exercise. Cheap to settle now, awkward once someone has shipped a subclass against
+    1.0.
 - [ ] **"Coming from a hand-rolled repository" guide** — the second half of the migration set (the
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
