@@ -19,8 +19,8 @@ mostly a pull request; the tracked issues are #12, #13, #23 and #29. GitHub redi
 
 Everything else compounds once there's a public artifact.
 
-**Where this project actually stands:** roughly six weeks of work, 36 shipped roadmap items, and
-a locked public API of 55 types and 284 non-synthetic members across seven
+**Where this project actually stands:** roughly three months of work, 51 shipped roadmap items, and
+a locked public API of 57 types and 310 non-synthetic members across seven
 `*.api` dumps — with **zero published artifacts**. Nobody has ever typed
 `implementation("io.github.quasarapps:…")` against this library, hit a POM problem, or argued
 with a default. Every API decision so far — including the ones about to be frozen at 1.0 — was
@@ -37,14 +37,20 @@ and the version bump off `-SNAPSHOT`.
   deliberate click in the Central Portal, after which the **Cut a GitHub Release** workflow
   announces it. Full walkthrough in [CONTRIBUTING](CONTRIBUTING.md). *(owner action — S)*
 - [ ] **Re-fold `[Unreleased]` into `0.1.0` before tagging** — the collapse below shipped, and
-  since then `[Unreleased]` has re-accumulated above the dated section: the `revalidateActive(force)`
+  since then `[Unreleased]` has re-accumulated above the dated section, now under *two* separate
+  `### Added` headings with a `### Changed` block between them: the `revalidateActive(force)`
   parameter (a signature change on the interface), the batched and `maxAge`-aware reconnect sweep,
-  the commit-only hydration guard, the widened sample, the Store5 guide and the staged-release
-  workflow. `changelog-section.sh` extracts the `## [0.1.0]` section *only*, so tagging now would
-  publish artifacts containing all of that and announce notes that mention none of it — and
-  CONTRIBUTING's step 1, "add a dated section", reads as already done, which is exactly how the trap
-  gets sprung. Fold them in, re-date the heading, and leave `[Unreleased]` empty at the tag; the
-  version gate cannot catch this, because the section exists. *(S)*
+  the commit-only hydration guard, the `maxBatchSize` chunking overloads (and the windowed
+  overload's cap now bounding explicit reads — a behaviour change on an existing knob),
+  `RetryAfterHint` with `delayFor`/`maxRetryAfter` and `aquifer-okhttp` parsing `Retry-After`,
+  `InMemorySourceOfTruth` in `aquifer-test`, the `aquifer-bom` artifact, the widened sample, the
+  Store5 guide and the staged-release workflow. `changelog-section.sh` extracts the `## [0.1.0]`
+  section *only*, so tagging now would publish artifacts containing all of that and announce notes
+  that mention none of it — and CONTRIBUTING's step 1, "add a dated section", reads as already done,
+  which is exactly how the trap gets sprung. Fold them in (merging the duplicate headings — and for
+  a *first* release the `Changed` entries fold into the surface description, since there is no
+  previous version to be relative to), re-date the heading, and leave `[Unreleased]` empty at the
+  tag; the version gate cannot catch this, because the section exists. *(S)*
 - [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
   published coordinates from a clean project, and confirm the snippet still lists all eight
   published artifacts (seven modules + `aquifer-bom`). *(S)*
@@ -294,16 +300,6 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   failure memory then suppresses the sweep for the *real* reconnect that follows. Requiring
   `NET_CAPABILITY_VALIDATED` is the standard fix and is API 23+, the same seam the Robolectric
   multi-SDK item in 0.5 exists to test; below 23 keep today's behaviour and say so. *(S)*
-- [ ] **Chunk explicit batches by `maxBatchSize`** — the cap is honoured by the coalescing
-  accumulator alone. `getAll`, `streamMany`, `prefetchAll` and the reconnect sweep hand `startBatch`
-  their whole key set and it dispatches one call, so a backend that accepts at most 100 ids per
-  request — the usual shape, whether from URL length or an explicit cap — receives 500 and answers
-  with an error that fails every key. Callers currently chunk by hand and lose the single
-  round-trip they configured a batch fetcher for; the SQLDelight adapter already does the same
-  chunking at the storage layer for the same reason. Split the started set into `maxBatchSize`
-  chunks, each its own retry-all unit (a failing chunk fails only its keys; `onFetchRetried` stays
-  per key), and let the cap be set without a coalescing window — today it lives only on the
-  windowed `batchFetcher` overload, so a non-coalescing store cannot express it. *(S)*
 - [ ] **Bound what a stalled collector can buffer** *(design first)* — every stream drains the bus
   through a `Channel.UNLIMITED` buffer so that one slow screen can never stall the engine; the
   README sells the isolation and the KDoc names the cost, which is unbounded memory per stalled
@@ -368,10 +364,11 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   concurrent commit throughput against a real file store, then per-key lock striping only if the
   numbers justify it (constraints documented in the issue). Deferred for two reasons: with zero
   published artifacts there is no real workload to benchmark, so any harness written now encodes a
-  guess about contention nobody has reported; and the hydration-guard fix queued in 0.5 changes how
-  much traffic the commit lock actually sees, so a baseline taken today measures a shape that is
-  about to move. Revisit after 0.1.0 has users, or the first time someone reports commit
-  contention. *(M–L)*
+  guess about contention nobody has reported; and the commit-only hydration guard (#88, shipped in
+  0.5) has just changed how much traffic the commit lock sees — concurrent cold reads no longer pay
+  a guarded re-read under the lock — so any contention intuition formed before it is void and a
+  baseline has to be taken on the post-#88 shape. Revisit after 0.1.0 has users, or the first time
+  someone reports commit contention. *(M–L)*
 - [x] **Honour `Retry-After`** (shipped — seam #101, parser #103) — a `429`/`503` carrying
   `Retry-After` is now retried on the server's stated wait rather than the computed exponential
   schedule. `aquifer-core` cannot see HTTP types, so the seam is a one-property interface,
@@ -389,6 +386,25 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   reports whichever delay won. **One deferred decision:** whether a server-declared wait should also
   seed the negative-cache suppression window — a 30 s `Retry-After` is exactly what that window is
   for, but the streak arithmetic must not multiply it. *(S)*
+- [x] **Chunk explicit batches by `maxBatchSize`** (shipped — #99) — the cap was honoured by the
+  coalescing accumulator alone: `getAll`, `streamMany`, `prefetchAll` and the reconnect sweep handed
+  `startBatch` their whole key set and it dispatched one call, so a backend that accepts at most 100
+  ids per request — the usual shape, whether from URL length or an explicit cap — received 500 and
+  answered with an error that failed every key, and the cap itself lived only on the windowed
+  `batchFetcher(coalesceWindow, maxBatchSize)` overload, so a non-coalescing store could not express
+  it at all. `startBatch` now splits the requested key set into `maxBatchSize` chunks, each its own
+  retry-all unit (a failing chunk fails only its keys; `onFetchRetried` still fires per key), and
+  every explicit multi-key read — `getAll`, `streamMany`, `prefetchAll`, `revalidateActive` and so
+  the reconnect sweep — goes through it. Chunks dispatch **sequentially**, one call completing
+  before the next is issued, because a backend that caps ids per request typically caps concurrency
+  too, and store-scope cancellation stops the loop between chunks. The cap is reachable without a
+  window through additive `batchFetcher(maxBatchSize) { … }` and
+  `conditionalBatchFetcher(maxBatchSize) { … }` overloads; the existing signatures and JVM
+  descriptors are untouched, the one source-level caveat being an unqualified
+  `::conditionalBatchFetcher` reference, which gains a second overload and needs a type hint. A
+  store already on the windowed overload sees an explicit `getAll` of more than `maxBatchSize` keys
+  split where it previously went out as one — the same cap, applied on both paths. The SQLDelight
+  adapter's storage-layer chunking at SQLite's host-parameter cap is unchanged and independent. *(S)*
 - [x] **Conditional fetching (ETag / Last-Modified)** — shipped as
   `conditionalFetcher { key, validator -> FetchResult }` with `Fresh(value, validator)` /
   `NotModified`: validators are stored next to the value (memory, `PersistedEntry`, the
@@ -475,10 +491,10 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
 
   Making it useful would mean keeping the pre-edit server body alongside the local one so a 304
   could raise a conflict — which is an outbox with conflict handling, i.e. the **Offline mutations**
-  (`aquifer-mutations`) item in 0.6, not a knob on `put`. This is therefore a consequence of `put` not being
-  a mutation queue rather than a missing optimization, and the KDoc, README and this entry now say
-  so instead of calling the drop merely "defensible". Behaviour unchanged; pinned by
-  `a local put clears the validator`. *(S)*
+  (`aquifer-mutations`) item under *Beyond 1.0*, not a knob on `put`. This is therefore a consequence
+  of `put` not being a mutation queue rather than a missing optimization, and the KDoc, README and
+  this entry now say so instead of calling the drop merely "defensible". Behaviour unchanged; pinned
+  by `a local put clears the validator`. *(S)*
 - [x] **Fix `revalidateActive()` — batch it, honor per-stream `maxAge`, add a force knob** — the
   reconnect path walked `activeKeys` doing a per-key `load()` then `refresh()`. All four parts have
   shipped: batched reads, per-stream `maxAge`, the force knob, and batched fetches.
@@ -531,7 +547,7 @@ Make the fetch path cheap and stampede-proof under real-world conditions.
   that means handing the sweep's already-loaded, already-fenced snapshots to the refresh path so it
   stops re-reading — which moves a read that sits inside the fetch body on purpose ("the entry as it
   stood when the fetch started"), and therefore wants its own change and its own Lincheck run rather
-  than riding along with a routing patch. **Left open below.**
+  than riding along with a routing patch. **Left open above.**
 
   **The force knob is shipped**, as `revalidateActive(force = false)` — a defaulted parameter
   rather than a second method, so the two behaviours stay visibly one operation and Kotlin call
@@ -721,12 +737,17 @@ The engine's guarantees deserve machine-checked evidence.
   signature jar on the JVM modules, or Lint from `aquifer-android` with `checkDependencies = true`.
   Pick whichever demonstrably fails on a deliberate `compute` call, and keep that call as the
   negative test. *(S)*
-- [ ] **A persistence test kit** — `aquifer-core` keeps an `InMemorySourceOfTruth` in its *test*
-  sources, so a consumer wanting to test the real engine against persistence without touching disk
-  writes their own, and the author of a custom `SourceOfTruth` has nothing to run their store
-  against: the SPI contract is six paragraphs of prose (null for undecodable, `readAll` omission,
-  `keys()` empty versus `null`, non-atomic `writeAll`, safety under concurrent calls) and no check.
-  Publish the in-memory store from `aquifer-test`, with failure and latency injection, and an
+- [ ] **A persistence test kit** — **the in-memory half is shipped — #100:**
+  `InMemorySourceOfTruth` is published from `aquifer-test`, implementing the whole SPI natively
+  (bulk `readAll`/`writeAll`/`deleteMany`, enumerable non-`null` `keys()`/`keysWhere()`, so
+  `invalidateWhere` is disk-wide) with an `entries` snapshot for assertions and the injection
+  knobs — `latency` under virtual time, `failWith`, and the direction-specific
+  `failReadsWith`/`failWritesWith` — so a consumer can drive the **real** engine against
+  persistence without touching disk. (`aquifer-core`'s own suite keeps a separate *non-enumerable*
+  double on purpose, for the `keys() == null` fallback.) What remains is the *contract* half: the
+  author of a custom `SourceOfTruth` still has nothing to run their store against — the SPI
+  contract is six paragraphs of prose (null for undecodable, `readAll` omission, `keys()` empty
+  versus `null`, non-atomic `writeAll`, safety under concurrent calls) and no check. Add an
   abstract contract suite (`AbstractSourceOfTruthContractTest`) that the two shipped adapters run
   in their own test sets and a custom store's author subclasses. It is also the right first step
   for the adapter-parity item in 0.4: a shared suite is how parity gets verified rather than
@@ -747,10 +768,11 @@ The engine's guarantees deserve machine-checked evidence.
   over operation bodies that are one `synchronized` block each. They are not *incapable* of
   failing — they would catch a `synchronized` being dropped or split wrongly — but that is the
   whole of their guarantee. (`MemoryCacheEvictionLincheckTest` already covers the interesting half
-  for `MemoryCache`; `BoundedLruMap` has no eviction counterpart at all.) Meanwhile the code that
-  *is* hand-rolled has no model-checking: `EpochFence.fence` does `keyEpochs[key] =
-  (keyEpochs[key] ?: 0L) + 1L` — a non-atomic read-modify-write on a `ConcurrentHashMap`, correct
-  today only because every one of its call sites holds `commitGuard`. That invariant *is* stated —
+  for `MemoryCache`, and `BoundedLruMapEvictionLincheckTest` — #102 — now does the same for
+  `BoundedLruMap`, where `get`'s access-order reorder becomes observable through `keys()`.)
+  Meanwhile the code that *is* hand-rolled has no model-checking: `EpochFence.fence` does
+  `keyEpochs[key] = (keyEpochs[key] ?: 0L) + 1L` — a non-atomic read-modify-write on a
+  `ConcurrentHashMap`, correct today only because every one of its call sites holds `commitGuard`. That invariant *is* stated —
   `EpochFence`'s class KDoc has a **Locking** paragraph and `fence`/`fenceAll` each repeat "must run
   under the commit lock" — but nothing **enforces** it, which is the real gap. (An earlier revision
   of this entry said it was unstated; it isn't.) The other hand-rolled primitive is the active-key
@@ -887,11 +909,13 @@ The engine's guarantees deserve machine-checked evidence.
   — so the win is purely the avoidable I/O, taken in the window where the commit lock is most
   contended.
 
-  Two tests pin it, and they discriminate in opposite directions: with the guard keyed back on the
-  sequencer, two concurrent cold reads of different keys record reads `[a, b, b]` instead of
-  `[a, b]`; and a racing *fetch* commit (which does not move the epoch, unlike `put`/`invalidate`,
-  and which must therefore still be caught) forces the re-read under both keyings — proving the
-  guard was made accurate rather than merely quieter. *(M)*
+  Three tests pin it, and they discriminate in opposite directions: with the guard keyed back on
+  the sequencer, two concurrent cold reads of different keys record reads `[a, b, b]` instead of
+  `[a, b]`, and two concurrent cold `getAll` batches over disjoint key sets record batch reads
+  `[ab, cd, cd]` instead of `[ab, cd]` — the `loadAll` half, where the repeated read is the whole
+  batch and therefore the case this change was for; and a racing *fetch* commit (which does not move
+  the epoch, unlike `put`/`invalidate`, and which must therefore still be caught) forces the re-read
+  under both keyings — proving the guard was made accurate rather than merely quieter. *(M)*
 
 ## 0.6 — API ergonomics & polish
 
@@ -1043,7 +1067,10 @@ the existing fencing and single-flight guarantees.
     the counters in 0.5).
     Either land them before the freeze, or decide now that these types stop being `data class`es (a
     plain class with a builder, or explicit `copy`) so 1.x can grow them. `HttpException` is exempt
-    — a class can gain a defaulted secondary constructor — which is how `retryAfter` is planned.
+    — a class can gain a constructor without re-signing the old one — which is how `retryAfter`
+    already landed (#103): the primary constructor went `internal` and took the new field, and the
+    locked `(code, url)` form stayed as a public secondary, so that constructor entry in the BCV
+    dump never moved — it gained only the `RetryAfterHint` supertype and the `retryAfter` getter.
 - [ ] **Semver policy + CHANGELOG discipline** documented — what "public API" covers (the BCV
   dumps, not the internals), what a pre-1.0 source break costs, and one entry per change so
   the `[Unreleased]` sprawl the 0.1.0 tag cleans up does not simply re-accumulate. The
@@ -1052,11 +1079,21 @@ the existing fencing and single-flight guarantees.
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
   survival. *(S)*
-- [ ] **Supply-chain hardening** — a `dependency-review-action` gate and a CodeQL workflow on
-  PRs (Dependabot bumps versions but does not CVE-alert the existing tree), GitHub Actions
-  pinned to commit SHAs, and build-provenance/SLSA attestation on the release artifacts (the
-  release job currently has no top-level `permissions` block and signs only with the Maven PGP
-  signature). Cheap, standard insurance for a widely-embeddable library. *(S)*
+- [ ] **Supply-chain hardening** — a `dependency-review-action` gate (Dependabot bumps versions but
+  does not CVE-alert the existing tree), CodeQL widened past the `actions` language, GitHub Actions
+  pinned to commit SHAs rather than the floating tags in use today (`actions/checkout@v7`,
+  `actions/setup-java@v6`, `gradle/actions/setup-gradle@v6`, `actions/upload-artifact@v7`, and the
+  reusable Copilot-review workflow at `@main`), and build-provenance/SLSA attestation on the
+  release artifacts. Two halves are already in place, so only the gaps above are left. Code
+  scanning *does* run on every PR, through CodeQL **default setup**
+  (`dynamic/github-code-scanning/codeql` — a repository setting
+  rather than a workflow file, which is why `.github/workflows/` has no CodeQL entry), but it
+  analyses only the `actions` language, leaving the Kotlin sources it would most want to scan
+  untouched. And token scope is already minimal: every workflow carries a top-level
+  `permissions: contents: read`, `contents: write` is scoped to the announce job alone, and the
+  release and announce checkouts run `persist-credentials: false`. What the artifacts still lack is
+  provenance — they carry the Maven PGP signature and nothing else. Cheap, standard insurance for a
+  widely-embeddable library. *(S)*
 
 ## Beyond 1.0 — strategic bets
 
