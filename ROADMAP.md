@@ -1129,13 +1129,14 @@ the existing fencing and single-flight guarantees.
       this repo — does two things at once: one clause leaves the run as a **skip** rather than a
       failure, and every whole-entry comparison silently stops checking that field, which is
       precisely the coverage the bulk-path clauses exist for. A moved skip count is the only trace.
-    - **Adding a clause to the suite** is the case the four above miss, and the one certain to
-      happen. It is not a source break at all: nobody's subclass stops compiling, and a downstream
-      store that passed the contract yesterday simply fails today, on code its author did not
-      touch. For a class the README tells external implementors to subclass, that is arguably *the*
-      stability question — and it is why the test-kit item in 0.5 carries no clause count. Say
-      whether a new clause is a breaking change, a minor one, or something a consumer takes on by
-      choosing a version.
+    - **Changing what the suite asserts** is the case the four above miss, and the one certain to
+      happen — adding a clause is the common instance, tightening an existing one has identical
+      consequences. It is not a source break at all: nobody's subclass stops compiling, and a
+      downstream store that passed the contract yesterday simply fails today, on code its author
+      did not touch. For a class the README tells external implementors to subclass, that is
+      arguably *the* stability question — and it is why the test-kit item in 0.5 carries no clause
+      count. Say whether a stricter suite is a breaking change, a minor one, or something a
+      consumer takes on by choosing a version.
 
     Decide whether the variant carries the stability promise, and over what — the hooks' shape, the
     suite's contents, or both. If it does, close the gap deliberately rather than resting on
