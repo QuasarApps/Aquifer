@@ -1121,15 +1121,26 @@ the existing fencing and single-flight guarantees.
       overrides `destroyStore`, it and the file store override `writeUndecodableEntry`, but
       **nothing overrides `persistsValidator` or `persistsServerFreshFor`** — those two could be
       renamed or dropped today with `./gradlew build` staying green.
-    - **Flipping an `open` hook's default** is the one that breaks nothing and says nothing.
-      `persistsValidator` and `persistsServerFreshFor` both default to `true`; flipping either to
-      `false` compiles everywhere and quietly stops every subclass that does not override it —
-      which today is all three in this repo — asserting that the field round-trips. Green build,
-      weaker suite, no signal.
+    - **Flipping an `open` hook's default** breaks nothing and barely reports anything.
+      `persistsValidator` and `persistsServerFreshFor` both default to `true`, and each is read in
+      two places: `comparable()` nulls the field on both sides of every whole-entry comparison, and
+      a dedicated round-trip clause guards on it with `assumeTrue`. So flipping either to `false`
+      compiles everywhere and, for every subclass that does not override it — today all three in
+      this repo — does two things at once: one clause leaves the run as a **skip** rather than a
+      failure, and every whole-entry comparison silently stops checking that field, which is
+      precisely the coverage the bulk-path clauses exist for. A moved skip count is the only trace.
+    - **Adding a clause to the suite** is the case the four above miss, and the one certain to
+      happen. It is not a source break at all: nobody's subclass stops compiling, and a downstream
+      store that passed the contract yesterday simply fails today, on code its author did not
+      touch. For a class the README tells external implementors to subclass, that is arguably *the*
+      stability question — and it is why the test-kit item in 0.5 carries no clause count. Say
+      whether a new clause is a breaking change, a minor one, or something a consumer takes on by
+      choosing a version.
 
-    Decide whether the variant carries the stability promise; if it does, close the gap
-    deliberately rather than resting on whichever hooks the existing subclasses happen to exercise.
-    Cheap to settle now, awkward once someone has shipped a subclass against 1.0.
+    Decide whether the variant carries the stability promise, and over what — the hooks' shape, the
+    suite's contents, or both. If it does, close the gap deliberately rather than resting on
+    whichever hooks the existing subclasses happen to exercise. Cheap to settle now, awkward once
+    someone has shipped a subclass against 1.0.
 - [ ] **"Coming from a hand-rolled repository" guide** — the second half of the migration set (the
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
