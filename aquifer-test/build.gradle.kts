@@ -6,6 +6,10 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.dokka)
     alias(libs.plugins.maven.publish)
+    // Publishes the SourceOfTruth contract suite as a separate `test-fixtures` variant of this
+    // module rather than as part of its main surface, so JUnit does not become a transitive
+    // dependency of consumers who only want `fakeAquifer`, `FakeClock` or `settle()`.
+    `java-test-fixtures`
 }
 
 group = "io.github.quasarapps"
@@ -28,6 +32,14 @@ dependencies {
     // settle() takes TestScope as its receiver, so the coroutine test library is part of this
     // module's public API surface, not an implementation detail.
     api(libs.kotlinx.coroutines.test)
+
+    // The contract suite's own surface: a subclass writes `@Test`-free Kotlin, but it inherits
+    // JUnit-annotated methods and calls kotlin.test assertions, so both are `api` *of the fixtures
+    // variant* — which is precisely the separation this variant buys. They stay off the main
+    // surface above.
+    testFixturesApi(platform(libs.junit.bom))
+    testFixturesApi(libs.kotlin.test.junit5)
+    testFixturesApi(libs.junit.jupiter)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.kotlin.test.junit5)

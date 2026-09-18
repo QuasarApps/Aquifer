@@ -683,6 +683,43 @@ hydrate" case (settable at construction and between calls) — inject slow or fa
 `runTest`'s virtual time, so the engine's timing and failing-store paths are reachable
 deterministically.
 
+### Checking your own `SourceOfTruth` against the contract
+
+If you implement `SourceOfTruth` yourself, `aquifer-test` publishes the SPI's contract as a runnable
+suite in a **test-fixtures variant**, so subclassing it checks your store against the clauses the
+interface states in prose:
+
+```kotlin
+testImplementation(testFixtures("io.github.quasarapps:aquifer-test:<version>"))
+```
+
+```kotlin
+class MyStoreContractTest : AbstractSourceOfTruthContractTest() {
+    @TempDir lateinit var dir: Path
+
+    override val isEnumerable = false                       // does it override keys()?
+    override fun createStore() = MyStore(dir)               // fresh and empty, once per test
+}
+```
+
+It pins the parts that are easy to half-implement and that fail in the *engine* rather than in your
+store: `read` returning `null` for an entry it can no longer decode instead of throwing, `readAll`
+**omitting** a missing key rather than mapping it to `null`, and `keys()` distinguishing "I hold
+nothing" (an empty set) from "I cannot enumerate" (`null`) — conflating those last two silently
+narrows `invalidateWhere` from disk-wide to in-process. It also drives every method concurrently,
+since the contract permits overlapping calls from arbitrary threads.
+
+It deliberately does **not** pin what the SPI leaves open: `writeAll`/`deleteMany` are *permitted*
+to be non-atomic, so all-or-nothing and partial-prefix stores both pass. Where a clause is genuinely
+optional there is a hook rather than a guess — `isEnumerable`, `persistsValidator`,
+`persistsServerFreshFor` and `writeUndecodableEntry`, the last of which skips the two decode cases
+when your store has no way to reach that state. The three stores in this repo run it: the in-memory
+fixture, the JSON file store (enumeration opted out) and the SQLDelight adapter (enumerable, with
+native bulk overrides).
+
+Because it is a separate variant rather than part of `aquifer-test`'s main surface, JUnit is **not**
+a transitive dependency of consumers who only want `fakeAquifer`, `FakeClock` or `settle()`.
+
 ## Design notes
 
 - **Single-flight fetches.** A per-key registry of in-flight `Deferred`s collapses concurrent
@@ -787,7 +824,7 @@ their order — this section deliberately does not restate it.
 | `aquifer-persistence-file` | JSON-files `SourceOfTruth` backed by kotlinx.serialization: atomic writes, self-healing reads. |
 | `aquifer-persistence-sqldelight` | SQLDelight `SourceOfTruth`: queryable, batched (`IN`-clause + transactions), and enumerable (disk-wide `invalidateWhere`). |
 | `aquifer-okhttp` | OkHttp conditional fetching: automatic `ETag`/`Last-Modified` revalidation, 304 → `NotModified`. |
-| `aquifer-test` | Test doubles for consumers (`testImplementation`): `fakeAquifer` with assertable fetch counts, `FakeClock`, `settle()`, and `InMemorySourceOfTruth` (a disk-free persistence fixture with latency/failure injection). |
+| `aquifer-test` | Test doubles for consumers (`testImplementation`): `fakeAquifer` with assertable fetch counts, `FakeClock`, `settle()`, and `InMemorySourceOfTruth` (a disk-free persistence fixture with latency/failure injection). Its `testFixtures` variant publishes `AbstractSourceOfTruthContractTest`, the SPI contract as a runnable suite for your own store. |
 | `aquifer-bom` | Maven BOM (`java-platform`): supplies one version for every module above, so consumers import the platform once and declare the modules without versions. |
 | `sample` | Runnable CLI tour: the core loop (cold start, stale-while-revalidate, `put`, process death, reconnect) then single-flight dedup, `prefetch`, batching, 304s, negative caching, and the counters (`./gradlew :sample:run`). |
 

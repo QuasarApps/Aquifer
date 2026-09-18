@@ -9,6 +9,22 @@ versions may contain breaking changes.
 
 ### Added
 
+- `AbstractSourceOfTruthContractTest`, published from a new **`test-fixtures` variant** of
+  `aquifer-test`, turns the `SourceOfTruth` contract into a runnable suite: subclass it, point
+  `createStore()` at your store, and the clauses the SPI states in prose become tests. It pins the
+  parts that are easy to half-implement and that fail in the *engine* rather than in the store —
+  `read` returning `null` for an entry it can no longer decode instead of throwing, `readAll`
+  **omitting** a missing key rather than mapping it to `null`, `keys()` distinguishing "holds
+  nothing" (an empty set) from "cannot enumerate" (`null`), and every method driven concurrently.
+  It does not pin what the SPI leaves open: `writeAll`/`deleteMany` are permitted to be non-atomic,
+  so all-or-nothing and partial-prefix stores both pass, and the optional clauses are hooks
+  (`isEnumerable`, `persistsValidator`, `persistsServerFreshFor`, `writeUndecodableEntry`) rather
+  than assumptions. Consume it with
+  `testImplementation(testFixtures("io.github.quasarapps:aquifer-test:<version>"))`. Because it is a
+  separate variant, JUnit is **not** a transitive dependency of consumers who only use
+  `fakeAquifer`, `FakeClock`, `settle()` or `InMemorySourceOfTruth`, and `aquifer-test`'s locked
+  main API is unchanged.
+
 - `InMemorySourceOfTruth` in `aquifer-test`: a published, documented `SourceOfTruth` backed by a
   synchronized `LinkedHashMap`, so a consumer can drive the **real** engine against persistence
   without touching disk. It implements the full SPI natively — including bulk `readAll`/`writeAll`/
@@ -95,6 +111,17 @@ versions may contain breaking changes.
   argument explicitly (Kotlin default arguments are invisible from Java), and anyone implementing
   `Aquifer` directly must update their override. Permitted before 1.0, per this file's header, but
   it is a breaking change rather than a purely additive one.
+
+### Fixed
+
+- `JsonFileSourceOfTruth.deleteAll()` no longer destroys a concurrent write. It swept every
+  `.tmp` file alongside the stored entries, so a `write` that had created its temp but not yet
+  moved it into place lost that temp and failed with `NoSuchFileException` — surfacing to a caller
+  whose only mistake was overlapping a `put` with an `invalidateAll`, which the `SourceOfTruth`
+  contract explicitly permits. `deleteAll` now removes entries only. Nothing is leaked by the
+  narrower sweep: temps orphaned by a crash are already cleared by the one-time housekeeping pass
+  that runs before any other filesystem access, so every temp still present when `deleteAll` runs
+  belongs to an in-flight write. Found by the new `SourceOfTruth` contract suite on its first run.
 
 ### Changed
 

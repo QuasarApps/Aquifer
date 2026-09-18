@@ -27,6 +27,10 @@ dependencies {
     api(project(":aquifer-core"))
     api(libs.kotlinx.serialization.json)
 
+    // The published SourceOfTruth contract suite, so this adapter is checked against the SPI's
+    // stated clauses rather than only against its own behaviour.
+    testImplementation(testFixtures(project(":aquifer-test")))
+
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.kotlin.test.junit5)
     testImplementation(libs.junit.jupiter)
