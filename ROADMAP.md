@@ -37,20 +37,25 @@ and the version bump off `-SNAPSHOT`.
   deliberate click in the Central Portal, after which the **Cut a GitHub Release** workflow
   announces it. Full walkthrough in [CONTRIBUTING](CONTRIBUTING.md). *(owner action — S)*
 - [ ] **Re-fold `[Unreleased]` into `0.1.0` before tagging** — the collapse below shipped, and
-  since then `[Unreleased]` has re-accumulated above the dated section, now under *two* separate
-  `### Added` headings with a `### Changed` block between them: the `revalidateActive(force)`
-  parameter (a signature change on the interface), the batched and `maxAge`-aware reconnect sweep,
-  the commit-only hydration guard, the `maxBatchSize` chunking overloads (and the windowed
-  overload's cap now bounding explicit reads — a behaviour change on an existing knob),
-  `RetryAfterHint` with `delayFor`/`maxRetryAfter` and `aquifer-okhttp` parsing `Retry-After`,
-  `InMemorySourceOfTruth` in `aquifer-test`, the `aquifer-bom` artifact, the widened sample, the
-  Store5 guide and the staged-release workflow. `changelog-section.sh` extracts the `## [0.1.0]`
-  section *only*, so tagging now would publish artifacts containing all of that and announce notes
-  that mention none of it — and CONTRIBUTING's step 1, "add a dated section", reads as already done,
-  which is exactly how the trap gets sprung. Fold them in (merging the duplicate headings — and for
-  a *first* release the `Changed` entries fold into the surface description, since there is no
-  previous version to be relative to), re-date the heading, and leave `[Unreleased]` empty at the
-  tag; the version gate cannot catch this, because the section exists. *(S)*
+  since then `[Unreleased]` has re-accumulated above the dated section, spread across repeated `###`
+  subsections — among them the `revalidateActive(force)` parameter (a signature change on the
+  interface), the batched and `maxAge`-aware reconnect sweep, the commit-only hydration guard, the
+  `maxBatchSize` chunking overloads (and the windowed overload's cap now bounding explicit reads — a
+  behaviour change on an existing knob), `RetryAfterHint` with `delayFor`/`maxRetryAfter` and
+  `aquifer-okhttp` parsing `Retry-After`, `InMemorySourceOfTruth` in `aquifer-test`, the
+  `aquifer-bom` artifact, the Kotlin and Robolectric bump that regenerated the `aquifer-test` dump,
+  the widened sample, the Store5 guide and the staged-release workflow. That list is illustrative
+  rather than a manifest, and deliberately carries no count: it exists to show *why* tagging now is
+  a trap, and an exact inventory goes stale on contact with the next merge while the instruction
+  below does not depend on one. `changelog-section.sh` extracts the `## [0.1.0]` section *only*, so
+  tagging now would publish artifacts containing all of that and announce notes that mention none of
+  it — and CONTRIBUTING's step 1, "add a dated section", reads as already done, which is exactly how
+  the trap gets sprung. Fold **every** `###` subsection under `[Unreleased]` into `[0.1.0]`, merging
+  each into the heading it already carries there and creating one where it does not — except that
+  for a *first* release the `Changed` **and `Fixed`** entries fold into the surface description
+  instead, since there is no previous version for either to be relative to, which is why `[0.1.0]`
+  carries neither heading. Then re-date the heading and leave `[Unreleased]` empty at the tag; the
+  version gate cannot catch this, because the section exists. *(S)*
 - [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
   published coordinates from a clean project, and confirm the snippet still lists all eight
   published artifacts (seven modules + `aquifer-bom`). *(S)*
