@@ -747,7 +747,7 @@ The engine's guarantees deserve machine-checked evidence.
   double on purpose, for the `keys() == null` fallback.)
 
   The contract half followed as `AbstractSourceOfTruthContractTest`, turning the six paragraphs of
-  SPI prose into 32 executable clauses — `null` for undecodable rather than a throw, `readAll`
+  SPI prose into executable clauses — `null` for undecodable rather than a throw, `readAll`
   *omitting* a missing key rather than mapping it to `null`, `keys()` empty versus `null`, whole
   entries compared rather than a field at a time (so a native bulk override cannot drop a timestamp
   or cross two keys' values unnoticed), and every method — bulk and enumeration included — raced
@@ -756,7 +756,7 @@ The engine's guarantees deserve machine-checked evidence.
   partial-prefix stores both pass, and the genuinely optional clauses are hooks (`isEnumerable`,
   `persistsValidator`, `persistsServerFreshFor`, `writeUndecodableEntry`) rather than guesses. All
   three stores in the repo run it — the in-memory fixture, the file store (enumeration opted out)
-  and the SQLDelight adapter (enumerable, native bulk overrides) — 96 executions.
+  and the SQLDelight adapter (enumerable, native bulk overrides), each against every clause.
 
   **It earned its keep on the first run**, which is the argument for the item: the file store's
   `deleteAll` swept in-flight `.tmp` files, so a `write` overlapping it lost its temp between
