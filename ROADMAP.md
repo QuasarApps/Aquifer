@@ -1103,6 +1103,45 @@ the existing fencing and single-flight guarantees.
   dumps, not the internals), what a pre-1.0 source break costs, and one entry per change so
   the `[Unreleased]` sprawl the 0.1.0 tag cleans up does not simply re-accumulate. The
   release-notes automation half of this item moved to Now. *(S)*
+  - **The `testFixtures` variant falls outside both buckets — rule on it before 1.0.**
+    `AbstractSourceOfTruthContractTest` ships from `aquifer-test`'s test-fixtures variant, which
+    BCV does not dump. The test-kit item in 0.5 banks on exactly that: it is what keeps JUnit off
+    the main published surface and the freeze docket clear of a test-framework dependency. The same
+    silence means the class's `protected` hooks carry no compatibility gate, while the README tells
+    external implementors to subclass it — so those hooks are a downstream contract. Not dumped, but
+    plainly not internal either: "the BCV dumps" gives no answer for them. What such a change costs
+    is not uniform, and the differences are the part worth writing down:
+    - **Adding an abstract member** breaks every subclass, in-repo ones included.
+    - **Renaming or removing an `abstract` hook** (`createStore`, `isEnumerable`) likewise, since
+      every subclass already overrides it — and all three in-repo subclasses do, so the build here
+      catches it.
+    - **Renaming or removing an `open` hook** (`destroyStore`, `persistsValidator`,
+      `persistsServerFreshFor`, `writeUndecodableEntry`) breaks only the subclasses that override
+      it, loudly, as an `overrides nothing` compile error. In-repo cover is partial: SQLDelight
+      overrides `destroyStore`, it and the file store override `writeUndecodableEntry`, but
+      **nothing overrides `persistsValidator` or `persistsServerFreshFor`** — those two could be
+      renamed or dropped today with `./gradlew build` staying green.
+    - **Flipping an `open` hook's default** breaks nothing and barely reports anything.
+      `persistsValidator` and `persistsServerFreshFor` both default to `true`, and each is read in
+      two places: `comparable()` nulls the field on both sides of every whole-entry comparison, and
+      a dedicated round-trip clause guards on it with `assumeTrue`. So flipping either to `false`
+      compiles everywhere and, for every subclass that does not override it — today all three in
+      this repo — does two things at once: one clause leaves the run as a **skip** rather than a
+      failure, and every whole-entry comparison silently stops checking that field, which is
+      precisely the coverage the bulk-path clauses exist for. A moved skip count is the only trace.
+    - **Changing what the suite asserts** is the case the four above miss, and the one certain to
+      happen — adding a clause is the common instance, tightening an existing one has identical
+      consequences. It is not a source break at all: nobody's subclass stops compiling, and a
+      downstream store that passed the contract yesterday simply fails today, on code its author
+      did not touch. For a class the README tells external implementors to subclass, that is
+      arguably *the* stability question — and it is why the test-kit item in 0.5 carries no clause
+      count. Say whether a stricter suite is a breaking change, a minor one, or something a
+      consumer takes on by choosing a version.
+
+    Decide whether the variant carries the stability promise, and over what — the hooks' shape, the
+    suite's contents, or both. If it does, close the gap deliberately rather than resting on
+    whichever hooks the existing subclasses happen to exercise. Cheap to settle now, awkward once
+    someone has shipped a subclass against 1.0.
 - [ ] **"Coming from a hand-rolled repository" guide** — the second half of the migration set (the
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
