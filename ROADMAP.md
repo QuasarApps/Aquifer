@@ -51,10 +51,11 @@ and the version bump off `-SNAPSHOT`.
   tagging now would publish artifacts containing all of that and announce notes that mention none of
   it — and CONTRIBUTING's step 1, "add a dated section", reads as already done, which is exactly how
   the trap gets sprung. Fold **every** `###` subsection under `[Unreleased]` into `[0.1.0]`, merging
-  each into the heading it already carries there — and for a *first* release the `Changed` entries
-  fold into the surface description, since there is no previous version to be relative to — then
-  re-date the heading and leave `[Unreleased]` empty at the tag; the version gate cannot catch this,
-  because the section exists. *(S)*
+  each into the heading it already carries there and creating one where it does not — except that
+  for a *first* release the `Changed` **and `Fixed`** entries fold into the surface description
+  instead, since there is no previous version for either to be relative to, which is why `[0.1.0]`
+  carries neither heading. Then re-date the heading and leave `[Unreleased]` empty at the tag; the
+  version gate cannot catch this, because the section exists. *(S)*
 - [ ] **Maven Central badge + install snippet verification** after the first release — resolve the
   published coordinates from a clean project, and confirm the snippet still lists all eight
   published artifacts (seven modules + `aquifer-bom`). *(S)*
