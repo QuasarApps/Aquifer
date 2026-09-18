@@ -1108,16 +1108,28 @@ the existing fencing and single-flight guarantees.
     BCV does not dump. The test-kit item in 0.5 banks on exactly that: it is what keeps JUnit off
     the main published surface and the freeze docket clear of a test-framework dependency. The same
     silence means the class's `protected` hooks carry no compatibility gate, while the README tells
-    external implementors to subclass it — so renaming a hook, or adding an abstract member, breaks
-    every downstream subclass with nothing in this repo noticing. Not dumped, but plainly not
-    internal either: "the BCV dumps" gives no answer for it. The in-repo subclasses are only a
-    partial substitute — the three of them override `createStore`, `destroyStore`, `isEnumerable`
-    and `writeUndecodableEntry`, so a change to those does fail the build, but **none overrides
-    `persistsValidator` or `persistsServerFreshFor`**, which could be renamed or dropped today with
-    the build staying green. Decide whether the variant carries the stability promise; if it does,
-    close that hole deliberately rather than resting on whichever hooks the existing subclasses
-    happen to exercise. Cheap to settle now, awkward once someone has shipped a subclass against
-    1.0.
+    external implementors to subclass it — so those hooks are a downstream contract. Not dumped, but
+    plainly not internal either: "the BCV dumps" gives no answer for them. What such a change costs
+    is not uniform, and the differences are the part worth writing down:
+    - **Adding an abstract member** breaks every subclass, in-repo ones included.
+    - **Renaming or removing an `abstract` hook** (`createStore`, `isEnumerable`) likewise, since
+      every subclass already overrides it — and all three in-repo subclasses do, so the build here
+      catches it.
+    - **Renaming or removing an `open` hook** (`destroyStore`, `persistsValidator`,
+      `persistsServerFreshFor`, `writeUndecodableEntry`) breaks only the subclasses that override
+      it, loudly, as an `overrides nothing` compile error. In-repo cover is partial: SQLDelight
+      overrides `destroyStore`, it and the file store override `writeUndecodableEntry`, but
+      **nothing overrides `persistsValidator` or `persistsServerFreshFor`** — those two could be
+      renamed or dropped today with `./gradlew build` staying green.
+    - **Flipping an `open` hook's default** is the one that breaks nothing and says nothing.
+      `persistsValidator` and `persistsServerFreshFor` both default to `true`; flipping either to
+      `false` compiles everywhere and quietly stops every subclass that does not override it —
+      which today is all three in this repo — asserting that the field round-trips. Green build,
+      weaker suite, no signal.
+
+    Decide whether the variant carries the stability promise; if it does, close the gap
+    deliberately rather than resting on whichever hooks the existing subclasses happen to exercise.
+    Cheap to settle now, awkward once someone has shipped a subclass against 1.0.
 - [ ] **"Coming from a hand-rolled repository" guide** — the second half of the migration set (the
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
