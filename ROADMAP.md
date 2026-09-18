@@ -772,12 +772,12 @@ The engine's guarantees deserve machine-checked evidence.
   `BoundedLruMap`, where `get`'s access-order reorder becomes observable through `keys()`.)
   Meanwhile the code that *is* hand-rolled has no model-checking: `EpochFence.fence` does
   `keyEpochs[key] = (keyEpochs[key] ?: 0L) + 1L` — a non-atomic read-modify-write on a
-  `ConcurrentHashMap`, correct today only because every one of its call sites holds `commitGuard`. That invariant *is* stated —
-  `EpochFence`'s class KDoc has a **Locking** paragraph and `fence`/`fenceAll` each repeat "must run
-  under the commit lock" — but nothing **enforces** it, which is the real gap. (An earlier revision
-  of this entry said it was unstated; it isn't.) The other hand-rolled primitive is the active-key
-  registry's CAS loops. Keep the baseline classes for their synchronization-removal coverage and add
-  cases aimed at both.
+  `ConcurrentHashMap`, correct today only because every one of its call sites holds `commitGuard`.
+  That invariant *is* stated — `EpochFence`'s class KDoc has a **Locking** paragraph and
+  `fence`/`fenceAll` each repeat "must run under the commit lock" — but nothing **enforces** it,
+  which is the real gap. (An earlier revision of this entry said it was unstated; it isn't.) The
+  other hand-rolled primitive is the active-key registry's CAS loops. Keep the baseline classes for
+  their synchronization-removal coverage and add cases aimed at both.
 
   **The registry half is shipped.** Those loops lived inline in `RealAquifer` as
   `registerActive`/`unregisterActive`; they are now `ActiveKeyRegistry`, extracted for the same
@@ -1070,7 +1070,8 @@ the existing fencing and single-flight guarantees.
     — a class can gain a constructor without re-signing the old one — which is how `retryAfter`
     already landed (#103): the primary constructor went `internal` and took the new field, and the
     locked `(code, url)` form stayed as a public secondary, so that constructor entry in the BCV
-    dump never moved — it gained only the `RetryAfterHint` supertype and the `retryAfter` getter.
+    dump never moved — the *class* gained only the `RetryAfterHint` supertype and the `retryAfter`
+    getter.
 - [ ] **Semver policy + CHANGELOG discipline** documented — what "public API" covers (the BCV
   dumps, not the internals), what a pre-1.0 source break costs, and one entry per change so
   the `[Unreleased]` sprawl the 0.1.0 tag cleans up does not simply re-accumulate. The
