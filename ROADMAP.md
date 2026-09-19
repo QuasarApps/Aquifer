@@ -1213,5 +1213,5 @@ serialization, and Java-first API surface.
 ---
 
 Suggestions welcome — open an issue. Open items are ordered by expected leverage and get re-sorted
-as reality disagrees; shipped items stay put, in ship order, as the record of how the library got
-here.
+as reality disagrees; shipped items stay put where they were written, as the record of how the
+library got here.
