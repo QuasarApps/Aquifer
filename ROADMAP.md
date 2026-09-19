@@ -6,12 +6,13 @@ process death, never resurrect deleted data" must actually be true, with every g
 tested and every trade-off written down.
 
 **How to read this:** milestones are sorted by importance. *Within* a milestone, **open items come
-first, ordered by leverage (impact ÷ effort); shipped items follow in the order they shipped**,
-kept as a record rather than re-sorted. Effort: **S** ≈ a day, **M** ≈ a few days, **L** ≈ a
-week+, **XL** ≈ multiple weeks. Checked boxes are shipped. A `#N` reference is a GitHub item in
-[QuasarApps/aquifer](https://github.com/QuasarApps/aquifer) — an **issue or a pull request**, and
-mostly a pull request; the tracked issues are #12, #13, #23 and #29. GitHub redirects
-`/issues/N` to `/pull/N` when the number is a PR, so the linked citations resolve either way.
+first, ordered by leverage (impact ÷ effort); shipped items stay where they were written and are
+ticked in place**, kept as a record rather than re-sorted. Effort: **S** ≈ a day, **M** ≈ a few
+days, **L** ≈ a week+, **XL** ≈ multiple weeks. Checked boxes are shipped. A `#N` reference is a
+GitHub item in [QuasarApps/aquifer](https://github.com/QuasarApps/aquifer) — an **issue or a pull
+request**, and mostly a pull request; the tracked issues are #12, #13, #23 and #29.
+GitHub redirects `/issues/N` to `/pull/N` when the number is a PR, so the linked citations
+resolve either way.
 
 ---
 
