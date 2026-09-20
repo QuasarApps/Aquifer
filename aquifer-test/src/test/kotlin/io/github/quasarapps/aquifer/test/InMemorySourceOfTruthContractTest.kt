@@ -20,8 +20,15 @@ class InMemorySourceOfTruthContractTest : AbstractSourceOfTruthContractTest() {
 
     // --- Hook surface pin ------------------------------------------------------------------
     //
-    // The four overrides below restate the suite's own defaults. That looks redundant and is
-    // deliberate: they exist to be a compile error, not to change behaviour.
+    // The four overrides below match the suite's own defaults, so they change no behaviour. That
+    // looks redundant and is deliberate: they exist to be a compile error.
+    //
+    // They are not copies that could drift out of step with the base, though — each is
+    // independently the right answer for this store. An in-memory map has nothing to release, so
+    // `destroyStore` is a no-op; the map carries the validator and the freshness horizon verbatim,
+    // so both flags are `true`; and a `Map<String, PersistedEntry<String>>` cannot hold an entry it
+    // fails to decode, so `writeUndecodableEntry` declines. They coincide with the defaults rather
+    // than depending on them, which is why pinning them costs no future correctness.
     //
     // ROADMAP's Semver ruling makes the suite's `protected` hooks a stable surface — renaming or
     // removing one is a breaking change for every downstream store that subclasses it, which the

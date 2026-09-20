@@ -49,6 +49,12 @@ import kotlin.test.assertTrue
  * *permitted* to be non-atomic, so neither an all-or-nothing store nor a partial-prefix one is
  * failed here. Where a clause is genuinely optional the suite exposes a hook rather than guessing:
  * [isEnumerable], [persistsValidator], [persistsServerFreshFor] and [writeUndecodableEntry].
+ *
+ * Every hook here is also overridden explicitly in `InMemorySourceOfTruthContractTest`, which is
+ * what pins this surface against renames — the binary-compatibility dumps do not cover a
+ * test-fixtures variant, so that subclass is the only thing in this repository that fails when a
+ * hook is renamed or removed. **Add a hook here, add an override there**, or the gate quietly goes
+ * back to covering only part of the surface.
  */
 public abstract class AbstractSourceOfTruthContractTest {
 
