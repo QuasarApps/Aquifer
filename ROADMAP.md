@@ -1148,18 +1148,22 @@ the existing fencing and single-flight guarantees.
       count. This is the case the ruling above puts in the *unpromised* half: a stricter suite is a
       minor release plus a `CHANGELOG` entry, not a major one.
 
-    **What the ruling leaves to do.** Nothing mechanical enforces the stable half — BCV does not
-    dump the variant, and the in-repo subclasses are an accidental partial gate rather than a
-    designed one. Closing it is cheap: have one in-repo subclass override **every** hook
-    explicitly, so a rename or removal is a compile error here before it is one downstream. That
-    still does not catch a flipped default, which under this ruling is a change to what the suite
-    asserts and so permitted — but it is the one permitted change that makes the suite quietly
-    *weaker* rather than stricter, so it earns a `CHANGELOG` entry on that ground alone.
-    Note that `CHANGELOG` obligation is **new**, not an application of the existing rule:
-    `CONTRIBUTING.md` owes an entry "whenever the public API grows", and this ruling's own premise
-    is that the fixtures variant is not the BCV-dumped public API — so a suite-clause change grows
-    nothing and, under the guide as written, owes nothing. The policy document has to widen that
-    trigger, or contributors following the guide will keep correctly omitting the entry.
+    **Enforcement.** The stable half now has a gate. BCV does not dump the fixtures variant, so
+    `InMemorySourceOfTruthContractTest` overrides **every** hook explicitly — renaming or removing
+    one is an `overrides nothing` compile error here before it is one in a consumer's build. It
+    stands in for `apiCheck` on a surface `apiCheck` cannot see, and it replaces the accidental
+    cover the adapter subclasses happened to provide: before it, `persistsValidator` and
+    `persistsServerFreshFor` were overridden nowhere and could be dropped with the build green.
+
+    The pin does not catch a **flipped default**, which under this ruling is a change to what the
+    suite asserts and so permitted — but it is the one permitted change that makes the suite
+    quietly *weaker* rather than stricter, so it earns a `CHANGELOG` entry on that ground alone.
+
+    **Still to do:** that `CHANGELOG` obligation is **new**, not an application of the existing
+    rule. `CONTRIBUTING.md` owes an entry "whenever the public API grows", and this ruling's own
+    premise is that the fixtures variant is not the BCV-dumped public API — so a suite-clause
+    change grows nothing and, under the guide as written, owes nothing. The policy document has to
+    widen that trigger, or contributors following the guide will keep correctly omitting the entry.
 - [ ] **"Coming from a hand-rolled repository" guide** — the second half of the migration set (the
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
