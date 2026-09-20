@@ -1154,6 +1154,11 @@ the existing fencing and single-flight guarantees.
     still does not catch a flipped default, which under this ruling is a change to what the suite
     asserts and so permitted — but it is the one permitted change that makes the suite quietly
     *weaker* rather than stricter, so it earns a `CHANGELOG` entry on that ground alone.
+    Note that `CHANGELOG` obligation is **new**, not an application of the existing rule:
+    `CONTRIBUTING.md` owes an entry "whenever the public API grows", and this ruling's own premise
+    is that the fixtures variant is not the BCV-dumped public API — so a suite-clause change grows
+    nothing and, under the guide as written, owes nothing. The policy document has to widen that
+    trigger, or contributors following the guide will keep correctly omitting the entry.
 - [ ] **"Coming from a hand-rolled repository" guide** — the second half of the migration set (the
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
