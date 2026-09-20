@@ -1127,16 +1127,19 @@ the existing fencing and single-flight guarantees.
       catches it.
     - **Renaming or removing an `open` hook** (`destroyStore`, `persistsValidator`,
       `persistsServerFreshFor`, `writeUndecodableEntry`) breaks only the subclasses that override
-      it, loudly, as an `overrides nothing` compile error. In-repo cover is partial: SQLDelight
-      overrides `destroyStore`, it and the file store override `writeUndecodableEntry`, but
-      **nothing overrides `persistsValidator` or `persistsServerFreshFor`** — those two could be
-      renamed or dropped today with `./gradlew build` staying green.
+      it, loudly, as an `overrides nothing` compile error. In-repo cover was partial and
+      accidental until the pin described under **Enforcement** below: SQLDelight overrode
+      `destroyStore`, it and the file store `writeUndecodableEntry`, and **nothing overrode
+      `persistsValidator` or `persistsServerFreshFor`** — either could be renamed or dropped with
+      `./gradlew build` staying green. The in-memory canary now overrides all four deliberately,
+      so any such rename fails here before it fails downstream.
     - **Flipping an `open` hook's default** breaks nothing and barely reports anything.
       `persistsValidator` and `persistsServerFreshFor` both default to `true`, and each is read in
       two places: `comparable()` nulls the field on both sides of every whole-entry comparison, and
       a dedicated round-trip clause guards on it with `assumeTrue`. So flipping either to `false`
-      compiles everywhere and, for every subclass that does not override it — today all three in
-      this repo — does two things at once: one clause leaves the run as a **skip** rather than a
+      compiles everywhere and, for every subclass that does not override it — now the two adapters,
+      since the canary pins both flags to `true` and so keeps its own coverage whatever the default
+      does — does two things at once: one clause leaves the run as a **skip** rather than a
       failure, and every whole-entry comparison silently stops checking that field, which is
       precisely the coverage the bulk-path clauses exist for. A moved skip count is the only trace.
     - **Changing what the suite asserts** is the case the four above miss, and the one certain to
