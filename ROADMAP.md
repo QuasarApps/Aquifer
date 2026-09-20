@@ -1103,14 +1103,23 @@ the existing fencing and single-flight guarantees.
   dumps, not the internals), what a pre-1.0 source break costs, and one entry per change so
   the `[Unreleased]` sprawl the 0.1.0 tag cleans up does not simply re-accumulate. The
   release-notes automation half of this item moved to Now. *(S)*
-  - **The `testFixtures` variant falls outside both buckets — rule on it before 1.0.**
+  - **The `testFixtures` variant: the hooks carry the promise, what the suite asserts does not.**
     `AbstractSourceOfTruthContractTest` ships from `aquifer-test`'s test-fixtures variant, which
     BCV does not dump. The test-kit item in 0.5 banks on exactly that: it is what keeps JUnit off
     the main published surface and the freeze docket clear of a test-framework dependency. The same
-    silence means the class's `protected` hooks carry no compatibility gate, while the README tells
-    external implementors to subclass it — so those hooks are a downstream contract. Not dumped, but
-    plainly not internal either: "the BCV dumps" gives no answer for them. What such a change costs
-    is not uniform, and the differences are the part worth writing down:
+    silence means the class's `protected` hooks carry no automatic compatibility gate, while the
+    README tells external implementors to subclass it — so those hooks are a downstream contract
+    that "the BCV dumps" does not cover. **Ruled**, and the policy document has to say so:
+    - **The hooks are stable.** Renaming or removing one, changing its signature, or adding an
+      abstract member is a breaking change and waits for a major version. They are an API that
+      consumers write code against; breaking them costs them a compile error and buys them nothing.
+    - **What the suite asserts is not.** A new clause, or a tightened one, may land in any minor
+      release with a `CHANGELOG` entry. The suite exists to catch contract violations, and a rule
+      that a newly-found bug class cannot be tested for until the next major release would make it
+      useless. A downstream build turning red here is the suite working: it is reporting a real
+      defect in that store, not an arbitrary break.
+
+    What a change costs today — the evidence the split rests on, and why the two halves differ:
     - **Adding an abstract member** breaks every subclass, in-repo ones included.
     - **Renaming or removing an `abstract` hook** (`createStore`, `isEnumerable`) likewise, since
       every subclass already overrides it — and all three in-repo subclasses do, so the build here
@@ -1135,13 +1144,21 @@ the existing fencing and single-flight guarantees.
       downstream store that passed the contract yesterday simply fails today, on code its author
       did not touch. For a class the README tells external implementors to subclass, that is
       arguably *the* stability question — and it is why the test-kit item in 0.5 carries no clause
-      count. Say whether a stricter suite is a breaking change, a minor one, or something a
-      consumer takes on by choosing a version.
+      count. This is the case the ruling above puts in the *unpromised* half: a stricter suite is a
+      minor release plus a `CHANGELOG` entry, not a major one.
 
-    Decide whether the variant carries the stability promise, and over what — the hooks' shape, the
-    suite's contents, or both. If it does, close the gap deliberately rather than resting on
-    whichever hooks the existing subclasses happen to exercise. Cheap to settle now, awkward once
-    someone has shipped a subclass against 1.0.
+    **What the ruling leaves to do.** Nothing mechanical enforces the stable half — BCV does not
+    dump the variant, and the in-repo subclasses are an accidental partial gate rather than a
+    designed one. Closing it is cheap: have one in-repo subclass override **every** hook
+    explicitly, so a rename or removal is a compile error here before it is one downstream. That
+    still does not catch a flipped default, which under this ruling is a change to what the suite
+    asserts and so permitted — but it is the one permitted change that makes the suite quietly
+    *weaker* rather than stricter, so it earns a `CHANGELOG` entry on that ground alone.
+    Note that `CHANGELOG` obligation is **new**, not an application of the existing rule:
+    `CONTRIBUTING.md` owes an entry "whenever the public API grows", and this ruling's own premise
+    is that the fixtures variant is not the BCV-dumped public API — so a suite-clause change grows
+    nothing and, under the guide as written, owes nothing. The policy document has to widen that
+    trigger, or contributors following the guide will keep correctly omitting the entry.
 - [ ] **"Coming from a hand-rolled repository" guide** — the second half of the migration set (the
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
