@@ -1158,15 +1158,18 @@ the existing fencing and single-flight guarantees.
     the adapter subclasses happened to provide — before it, `persistsValidator` and
     `persistsServerFreshFor` were overridden nowhere and could be dropped with the build green.
 
-    It does **not** cover every signature change the ruling above calls breaking, which was
-    measured rather than assumed. Kotlin permits a covariant override, so widening a hook's return
-    type (`destroyStore` from `Unit` to `Any`) leaves the override valid and the build green; and
-    renaming a parameter is only a warning on the override. Widening a *property* hook is blocked
-    regardless — the fixture's own `takeIf`/`assumeTrue` uses demand `Boolean` — so the residue is
-    return widening and parameter renames on the two function hooks. Neither earns a compile probe
-    today: the first has no plausible motive, and the second breaks only named-argument callers
-    while subclasses override these hooks rather than call them. Stated so the next person decides
-    with the facts instead of rediscovering them.
+    It does **not** cover every signature change the ruling above calls breaking, and the shape of
+    the gap was measured hook by hook rather than reasoned about. Kotlin permits a covariant
+    override, so in principle widening a hook's return type leaves the override valid and the build
+    green, and renaming a parameter is only a warning on it. In practice the suite's own body blocks
+    almost all of it: a hook whose value the suite *consumes* cannot widen, because the consuming
+    call stops compiling first — `createStore` is passed where a `SourceOfTruth` is wanted,
+    `isEnumerable` sits in an `if`, `persistsValidator`/`persistsServerFreshFor` feed `takeIf` and
+    `assumeTrue`, and `writeUndecodableEntry` feeds `assumeTrue` too. The residue is the one hook
+    whose result is discarded: **`destroyStore`**, called for its effect in a `finally`, plus
+    parameter renames on it and on `writeUndecodableEntry`. Neither earns a compile probe today —
+    widening a no-op's return has no plausible motive, and a renamed parameter breaks only
+    named-argument callers while subclasses override these hooks rather than call them.
 
     The pin does not catch a **flipped default**, which under this ruling is a change to what the
     suite asserts and so permitted — but it is the one permitted change that makes the suite
