@@ -1108,9 +1108,9 @@ the existing fencing and single-flight guarantees.
     `AbstractSourceOfTruthContractTest` ships from `aquifer-test`'s test-fixtures variant, which
     BCV does not dump. The test-kit item in 0.5 banks on exactly that: it is what keeps JUnit off
     the main published surface and the freeze docket clear of a test-framework dependency. The same
-    silence means the class's `protected` hooks carry no automatic compatibility gate, while the
-    README tells external implementors to subclass it — so those hooks are a downstream contract
-    that "the BCV dumps" does not cover. **Ruled**, and the policy document has to say so:
+    silence means BCV will never report a change to the class's `protected` hooks, while the README
+    tells external implementors to subclass it — so those hooks are a downstream contract that
+    "the BCV dumps" does not cover. **Ruled**, and the policy document has to say so:
     - **The hooks are stable.** Renaming or removing one, changing its signature, or adding an
       abstract member is a breaking change and waits for a major version. They are an API that
       consumers write code against; breaking them costs them a compile error and buys them nothing.
@@ -1151,12 +1151,22 @@ the existing fencing and single-flight guarantees.
       count. This is the case the ruling above puts in the *unpromised* half: a stricter suite is a
       minor release plus a `CHANGELOG` entry, not a major one.
 
-    **Enforcement.** The stable half now has a gate. BCV does not dump the fixtures variant, so
-    `InMemorySourceOfTruthContractTest` overrides **every** hook explicitly — renaming or removing
-    one is an `overrides nothing` compile error here before it is one in a consumer's build. It
-    stands in for `apiCheck` on a surface `apiCheck` cannot see, and it replaces the accidental
-    cover the adapter subclasses happened to provide: before it, `persistsValidator` and
+    **Enforcement — names, not signatures.** BCV does not dump the fixtures variant, so
+    `InMemorySourceOfTruthContractTest` overrides **every** hook explicitly: renaming or removing
+    one is an `overrides nothing` compile error here before it is one in a consumer's build. That
+    stands in for `apiCheck` on a surface `apiCheck` cannot see, and replaces the accidental cover
+    the adapter subclasses happened to provide — before it, `persistsValidator` and
     `persistsServerFreshFor` were overridden nowhere and could be dropped with the build green.
+
+    It does **not** cover every signature change the ruling above calls breaking, which was
+    measured rather than assumed. Kotlin permits a covariant override, so widening a hook's return
+    type (`destroyStore` from `Unit` to `Any`) leaves the override valid and the build green; and
+    renaming a parameter is only a warning on the override. Widening a *property* hook is blocked
+    regardless — the fixture's own `takeIf`/`assumeTrue` uses demand `Boolean` — so the residue is
+    return widening and parameter renames on the two function hooks. Neither earns a compile probe
+    today: the first has no plausible motive, and the second breaks only named-argument callers
+    while subclasses override these hooks rather than call them. Stated so the next person decides
+    with the facts instead of rediscovering them.
 
     The pin does not catch a **flipped default**, which under this ruling is a change to what the
     suite asserts and so permitted — but it is the one permitted change that makes the suite
