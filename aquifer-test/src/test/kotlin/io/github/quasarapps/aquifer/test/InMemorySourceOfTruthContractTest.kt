@@ -8,6 +8,8 @@ import io.github.quasarapps.aquifer.SourceOfTruth
  * This is the suite's own canary as much as the store's: the in-memory store is the reference
  * implementation consumers are pointed at, so a clause the suite gets wrong shows up here first,
  * and it is the one subject whose enumerable half is exercised without a database.
+ *
+ * It is also where the suite's **hook surface** is pinned — see the block below.
  */
 class InMemorySourceOfTruthContractTest : AbstractSourceOfTruthContractTest() {
 
@@ -15,4 +17,44 @@ class InMemorySourceOfTruthContractTest : AbstractSourceOfTruthContractTest() {
     override val isEnumerable: Boolean = true
 
     override fun createStore(): SourceOfTruth<String, String> = InMemorySourceOfTruth()
+
+    // --- Hook surface pin ------------------------------------------------------------------
+    //
+    // The four overrides below match the suite's own defaults, so they change no behaviour. That
+    // looks redundant and is deliberate: they exist to be a compile error.
+    //
+    // They are not copies that could drift out of step with the base, though — each is
+    // independently the right answer for this store. An in-memory map has nothing to release, so
+    // `destroyStore` is a no-op; the map carries the validator and the freshness horizon verbatim,
+    // so both flags are `true`; and a `Map<String, PersistedEntry<String>>` cannot hold an entry it
+    // fails to decode, so `writeUndecodableEntry` declines. They coincide with the defaults rather
+    // than depending on them, which is why pinning them costs no future correctness.
+    //
+    // ROADMAP's Semver ruling makes the suite's `protected` hooks a stable surface — renaming or
+    // removing one is a breaking change for every downstream store that subclasses it, which the
+    // README invites them to do. Nothing mechanical enforced that: BCV does not dump the
+    // test-fixtures variant, so the only thing standing in for `apiCheck` was whichever hooks the
+    // in-repo adapters happened to override. `persistsValidator` and `persistsServerFreshFor` were
+    // overridden nowhere, so either could have been renamed or dropped with `./gradlew build`
+    // still green.
+    //
+    // Overriding every hook in one place turns any such rename into an `overrides nothing` error
+    // here, before it is one in a consumer's build. This subject is the right home for it: it needs
+    // no database or temporary directory, so the pin costs nothing to run, and a reader who lands
+    // here is already looking at the reference implementation.
+    //
+    // Note this does not pin the hooks' *defaults*, only their existence and shape. Flipping a
+    // default is permitted under the ruling (it changes what the suite asserts, not the surface),
+    // and stays invisible to the compiler by design.
+
+    override fun destroyStore(store: SourceOfTruth<String, String>) = Unit
+
+    override val persistsValidator: Boolean get() = true
+
+    override val persistsServerFreshFor: Boolean get() = true
+
+    override suspend fun writeUndecodableEntry(
+        store: SourceOfTruth<String, String>,
+        key: String,
+    ): Boolean = false
 }

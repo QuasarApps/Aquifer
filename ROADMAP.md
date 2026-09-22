@@ -1108,9 +1108,9 @@ the existing fencing and single-flight guarantees.
     `AbstractSourceOfTruthContractTest` ships from `aquifer-test`'s test-fixtures variant, which
     BCV does not dump. The test-kit item in 0.5 banks on exactly that: it is what keeps JUnit off
     the main published surface and the freeze docket clear of a test-framework dependency. The same
-    silence means the class's `protected` hooks carry no automatic compatibility gate, while the
-    README tells external implementors to subclass it — so those hooks are a downstream contract
-    that "the BCV dumps" does not cover. **Ruled**, and the policy document has to say so:
+    silence means BCV will never report a change to the class's `protected` hooks, while the README
+    tells external implementors to subclass it — so those hooks are a downstream contract that
+    "the BCV dumps" does not cover. **Ruled**, and the policy document has to say so:
     - **The hooks are stable.** Renaming or removing one, changing its signature, or adding an
       abstract member is a breaking change and waits for a major version. They are an API that
       consumers write code against; breaking them costs them a compile error and buys them nothing.
@@ -1127,16 +1127,19 @@ the existing fencing and single-flight guarantees.
       catches it.
     - **Renaming or removing an `open` hook** (`destroyStore`, `persistsValidator`,
       `persistsServerFreshFor`, `writeUndecodableEntry`) breaks only the subclasses that override
-      it, loudly, as an `overrides nothing` compile error. In-repo cover is partial: SQLDelight
-      overrides `destroyStore`, it and the file store override `writeUndecodableEntry`, but
-      **nothing overrides `persistsValidator` or `persistsServerFreshFor`** — those two could be
-      renamed or dropped today with `./gradlew build` staying green.
+      it, loudly, as an `overrides nothing` compile error. In-repo cover was partial and
+      accidental until the pin described under **Enforcement** below: SQLDelight overrode
+      `destroyStore`, it and the file store `writeUndecodableEntry`, and **nothing overrode
+      `persistsValidator` or `persistsServerFreshFor`** — either could be renamed or dropped with
+      `./gradlew build` staying green. The in-memory canary now overrides all four deliberately,
+      so any such rename fails here before it fails downstream.
     - **Flipping an `open` hook's default** breaks nothing and barely reports anything.
       `persistsValidator` and `persistsServerFreshFor` both default to `true`, and each is read in
       two places: `comparable()` nulls the field on both sides of every whole-entry comparison, and
       a dedicated round-trip clause guards on it with `assumeTrue`. So flipping either to `false`
-      compiles everywhere and, for every subclass that does not override it — today all three in
-      this repo — does two things at once: one clause leaves the run as a **skip** rather than a
+      compiles everywhere and, for every subclass that does not override it — now the two adapters,
+      since the canary pins both flags to `true` and so keeps its own coverage whatever the default
+      does — does two things at once: one clause leaves the run as a **skip** rather than a
       failure, and every whole-entry comparison silently stops checking that field, which is
       precisely the coverage the bulk-path clauses exist for. A moved skip count is the only trace.
     - **Changing what the suite asserts** is the case the four above miss, and the one certain to
@@ -1148,18 +1151,35 @@ the existing fencing and single-flight guarantees.
       count. This is the case the ruling above puts in the *unpromised* half: a stricter suite is a
       minor release plus a `CHANGELOG` entry, not a major one.
 
-    **What the ruling leaves to do.** Nothing mechanical enforces the stable half — BCV does not
-    dump the variant, and the in-repo subclasses are an accidental partial gate rather than a
-    designed one. Closing it is cheap: have one in-repo subclass override **every** hook
-    explicitly, so a rename or removal is a compile error here before it is one downstream. That
-    still does not catch a flipped default, which under this ruling is a change to what the suite
-    asserts and so permitted — but it is the one permitted change that makes the suite quietly
-    *weaker* rather than stricter, so it earns a `CHANGELOG` entry on that ground alone.
-    Note that `CHANGELOG` obligation is **new**, not an application of the existing rule:
-    `CONTRIBUTING.md` owes an entry "whenever the public API grows", and this ruling's own premise
-    is that the fixtures variant is not the BCV-dumped public API — so a suite-clause change grows
-    nothing and, under the guide as written, owes nothing. The policy document has to widen that
-    trigger, or contributors following the guide will keep correctly omitting the entry.
+    **Enforcement — names, not signatures.** BCV does not dump the fixtures variant, so
+    `InMemorySourceOfTruthContractTest` overrides **every** hook explicitly: renaming or removing
+    one is an `overrides nothing` compile error here before it is one in a consumer's build. That
+    stands in for `apiCheck` on a surface `apiCheck` cannot see, and replaces the accidental cover
+    the adapter subclasses happened to provide — before it, `persistsValidator` and
+    `persistsServerFreshFor` were overridden nowhere and could be dropped with the build green.
+
+    It does **not** cover every signature change the ruling above calls breaking, and the shape of
+    the gap was measured hook by hook rather than reasoned about. Kotlin permits a covariant
+    override, so in principle widening a hook's return type leaves the override valid and the build
+    green, and renaming a parameter is only a warning on it. In practice the suite's own body blocks
+    almost all of it: a hook whose value the suite *consumes* cannot widen, because the consuming
+    call stops compiling first — `createStore` is passed where a `SourceOfTruth` is wanted,
+    `isEnumerable` sits in an `if`, `persistsValidator`/`persistsServerFreshFor` feed `takeIf` and
+    `assumeTrue`, and `writeUndecodableEntry` feeds `assumeTrue` too. The residue is the one hook
+    whose result is discarded: **`destroyStore`**, called for its effect in a `finally`, plus
+    parameter renames on it and on `writeUndecodableEntry`. Neither earns a compile probe today —
+    widening a no-op's return has no plausible motive, and a renamed parameter breaks only
+    named-argument callers while subclasses override these hooks rather than call them.
+
+    The pin does not catch a **flipped default**, which under this ruling is a change to what the
+    suite asserts and so permitted — but it is the one permitted change that makes the suite
+    quietly *weaker* rather than stricter, so it earns a `CHANGELOG` entry on that ground alone.
+
+    **Still to do:** that `CHANGELOG` obligation is **new**, not an application of the existing
+    rule. `CONTRIBUTING.md` owes an entry "whenever the public API grows", and this ruling's own
+    premise is that the fixtures variant is not the BCV-dumped public API — so a suite-clause
+    change grows nothing and, under the guide as written, owes nothing. The policy document has to
+    widen that trigger, or contributors following the guide will keep correctly omitting the entry.
 - [ ] **"Coming from a hand-rolled repository" guide** — the second half of the migration set (the
   Store5 guide moved to Now): the `MutableStateFlow` + `suspend fun refresh()` pattern most teams
   already have, and what Aquifer replaces in it — single-flight, epoch fencing, process-death
